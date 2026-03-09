@@ -90,11 +90,22 @@ public sealed class TelegramService(ITelegramBotClient botClient, IOptions<BotOp
 
     private string BuildWebAppUrl(long chainId)
     {
-        if (string.IsNullOrWhiteSpace(_options.WebhookBaseUrl))
+        var baseUrl = _options.WebhookBaseUrl;
+        if (string.IsNullOrWhiteSpace(baseUrl))
         {
             return $"https://example.com/webapp/index.html?chain_id={chainId}";
         }
 
-        return $"{_options.WebhookBaseUrl.TrimEnd('/')}/webapp/index.html?chain_id={chainId}";
+        // Force HTTPS for Telegram WebApp
+        if (baseUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+        {
+            baseUrl = "https://" + baseUrl[7..];
+        }
+        else if (!baseUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            baseUrl = "https://" + baseUrl;
+        }
+
+        return $"{baseUrl.TrimEnd('/')}/webapp/index.html?chain_id={chainId}";
     }
 }
