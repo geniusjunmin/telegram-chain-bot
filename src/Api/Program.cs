@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
+using System.Text.Json;
 using Telegram.Bot;
 using Telegram.Bot.Types;
 using TelegramChainBot.Api;
@@ -68,7 +69,6 @@ if (Directory.Exists(webAppPath))
 else
 {
     app.Logger.LogWarning("Webapp folder NOT found at {Path}", webAppPath);
-    // Fallback for different environments
     var fallbackPath = Path.Combine(app.Environment.ContentRootPath, "webapp");
     if (Directory.Exists(fallbackPath))
     {
@@ -95,15 +95,23 @@ app.MapPost("/telegram/webhook/{token}", async (
         return Results.Unauthorized();
     }
 
+    // Use System.Text.Json with JsonBotAPI.Options which is the standard way for v22
     using var reader = new StreamReader(context.Request.Body);
     var json = await reader.ReadToEndAsync(cancellationToken);
     
-    // Use Newtonsoft.Json to handle polymorphic Update object correctly for Telegram.Bot v22
-    var update = Newtonsoft.Json.JsonConvert.DeserializeObject<Update>(json);
-    
-    if (update == null) return Results.BadRequest();
+    try 
+    {
+        var update = JsonSerializer.Deserialize<Update>(json, JsonBotAPI.Options);
+        if (update == null) return Results.BadRequest();
 
-    await botService.HandleWebhookAsync(update, cancellationToken);
+        await botService.HandleWebhookAsync(update, cancellationToken);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "Error deserializing Telegram update");
+        return Results.BadRequest();
+    }
+    
     return Results.Ok();
 });
 

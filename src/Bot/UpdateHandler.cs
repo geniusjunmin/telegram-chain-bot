@@ -9,7 +9,7 @@ public sealed class UpdateHandler(ChainService chainService, TelegramService tel
 {
     public async Task HandleAsync(Update update, CancellationToken cancellationToken)
     {
-        logger.LogInformation("Received update type: {Type}, ID: {Id}", update.Type, update.Id);
+        logger.LogInformation("Received update type: {Type}, ID: {Id}", update.Type, update.Id.ToString());
 
         if (update.Type == UpdateType.Message && update.Message?.Text is not null)
         {
@@ -20,7 +20,7 @@ public sealed class UpdateHandler(ChainService chainService, TelegramService tel
         if (update.Type == UpdateType.CallbackQuery && update.CallbackQuery is not null)
         {
             logger.LogInformation("Handling CallbackQuery from User: {UserId}, Data: {Data}", 
-                update.CallbackQuery.From.Id, update.CallbackQuery.Data);
+                update.CallbackQuery.From.Id.ToString(), update.CallbackQuery.Data);
             await HandleCallbackAsync(update.CallbackQuery, cancellationToken);
         }
     }
