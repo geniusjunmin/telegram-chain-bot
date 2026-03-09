@@ -8,6 +8,9 @@ public sealed class UpdateHandler(ChainService chainService, TelegramService tel
 {
     public async Task HandleAsync(Update update, CancellationToken cancellationToken)
     {
+        // For debugging
+        // Console.WriteLine($"Received update: {update.Type}");
+
         if (update.Type == UpdateType.Message && update.Message?.Text is not null)
         {
             await HandleMessageAsync(update.Message, cancellationToken);
@@ -23,26 +26,25 @@ public sealed class UpdateHandler(ChainService chainService, TelegramService tel
     private async Task HandleMessageAsync(Message message, CancellationToken cancellationToken)
     {
         var text = message.Text!.Trim();
-        if (!text.StartsWith("/", StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        // Split by space to get the command
-        var parts = text.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
-        var commandPart = parts[0];
         
-        // Handle /command@botname
-        var actualCommand = commandPart.Split('@')[0];
-
-        // Check if it's our command
-        if (!actualCommand.Equals("/start_chain", StringComparison.OrdinalIgnoreCase))
+        // Handle "@bot /command" or "/command"
+        string? title = null;
+        if (text.Contains("/start_chain", StringComparison.OrdinalIgnoreCase))
+        {
+            var parts = text.Split(new[] { "/start_chain" }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length > 0)
+            {
+                // If it was "@bot /start_chain something", parts might contain ["@bot ", " something"]
+                // We want the part after /start_chain
+                title = parts[^1].Trim();
+            }
+        }
+        else
         {
             return;
         }
 
-        var title = parts.Length > 1 ? parts[1].Trim() : "聚餐接龙";
-        if (string.IsNullOrWhiteSpace(title))
+        if (string.IsNullOrWhiteSpace(title) || title.StartsWith("@"))
         {
             title = "聚餐接龙";
         }
@@ -57,38 +59,47 @@ public sealed class UpdateHandler(ChainService chainService, TelegramService tel
 
     private async Task HandleCallbackAsync(CallbackQuery callback, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(callback.Data) || !callback.Data.StartsWith("join:", StringComparison.OrdinalIgnoreCase))
+        // Always answer early to stop the spinner
+        try 
         {
-            return;
+            if (string.IsNullOrWhiteSpace(callback.Data) || !callback.Data.StartsWith("join:", StringComparison.OrdinalIgnoreCase))
+            {
+                await telegramService.AnswerCallbackAsync(callback.Id, "无效的操作", cancellationToken);
+                return;
+            }
+
+            if (!long.TryParse(callback.Data.Split(':', 2)[1], out var chainId))
+            {
+                await telegramService.AnswerCallbackAsync(callback.Id, "无效的接龙编号", cancellationToken);
+                return;
+            }
+
+            var chain = await chainService.GetChainAsync(chainId, cancellationToken);
+            if (chain is null)
+            {
+                await telegramService.AnswerCallbackAsync(callback.Id, "接龙不存在", cancellationToken);
+                return;
+            }
+
+            var user = callback.From;
+            var username = !string.IsNullOrWhiteSpace(user.Username)
+                ? user.Username
+                : user.FirstName;
+
+            var (added, members) = await chainService.JoinAsync(chainId, user.Id, username, cancellationToken);
+            
+            await telegramService.AnswerCallbackAsync(callback.Id, added ? "加入成功" : "你已经参加过了", cancellationToken);
+
+            if (added)
+            {
+                var messageText = ChainService.FormatChainMessage(chain.Title, members);
+                await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId, chainId, messageText, cancellationToken);
+            }
         }
-
-        if (!long.TryParse(callback.Data.Split(':', 2)[1], out var chainId))
+        catch (Exception ex)
         {
-            await telegramService.AnswerCallbackAsync(callback.Id, "无效的接龙编号", cancellationToken);
-            return;
-        }
-
-        var chain = await chainService.GetChainAsync(chainId, cancellationToken);
-        if (chain is null)
-        {
-            await telegramService.AnswerCallbackAsync(callback.Id, "接龙不存在", cancellationToken);
-            return;
-        }
-
-        var user = callback.From;
-        var username = !string.IsNullOrWhiteSpace(user.Username)
-            ? user.Username
-            : user.FirstName;
-
-        var (added, members) = await chainService.JoinAsync(chainId, user.Id, username, cancellationToken);
-        
-        // Answer early to stop the loading spinner
-        await telegramService.AnswerCallbackAsync(callback.Id, added ? "加入成功" : "你已经参加过了", cancellationToken);
-
-        if (added)
-        {
-            var messageText = ChainService.FormatChainMessage(chain.Title, members);
-            await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId, chainId, messageText, cancellationToken);
+            // Try to answer anyway if it hasn't been answered
+            try { await telegramService.AnswerCallbackAsync(callback.Id, "出错了，请稍后再试", cancellationToken); } catch {}
         }
     }
 }

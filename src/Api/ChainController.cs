@@ -19,19 +19,24 @@ public static class ChainController
         ChainService chainService,
         BotSecurityService security,
         TelegramService telegramService,
+        ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
     {
+        var logger = loggerFactory.CreateLogger("ChainController");
         var initData = httpRequest.Headers["X-Telegram-Init-Data"].ToString();
         if (!security.ValidateInitData(initData))
         {
+            logger.LogWarning("Invalid InitData received.");
             return Results.Unauthorized();
         }
 
         var chain = await chainService.GetChainAsync(request.ChainId, cancellationToken);
         if (chain is null)
         {
+            logger.LogWarning("Chain {ChainId} not found during Join.", request.ChainId);
             return Results.NotFound(new { error = "chain not found" });
         }
+        // ...
 
         var (added, members) = await chainService.JoinAsync(
             request.ChainId,
@@ -50,11 +55,13 @@ public static class ChainController
         });
     }
 
-    private static async Task<IResult> GetChainAsync(long chainId, AppDbContext db, CancellationToken cancellationToken)
+    private static async Task<IResult> GetChainAsync(long chainId, AppDbContext db, ILoggerFactory loggerFactory, CancellationToken cancellationToken)
     {
+        var logger = loggerFactory.CreateLogger("ChainController");
         var chain = await db.Chains.FirstOrDefaultAsync(c => c.Id == chainId, cancellationToken);
         if (chain is null)
         {
+            logger.LogWarning("Chain {ChainId} not found during Get.", chainId);
             return Results.NotFound(new { error = "chain not found" });
         }
 
