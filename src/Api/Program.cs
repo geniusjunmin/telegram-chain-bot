@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
 using Telegram.Bot;
@@ -85,7 +85,7 @@ app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
 app.MapPost("/telegram/webhook/{token}", async (
     string token,
-    Update update,
+    HttpContext context,
     IOptions<BotOptions> options,
     BotService botService,
     CancellationToken cancellationToken) =>
@@ -94,6 +94,14 @@ app.MapPost("/telegram/webhook/{token}", async (
     {
         return Results.Unauthorized();
     }
+
+    using var reader = new StreamReader(context.Request.Body);
+    var json = await reader.ReadToEndAsync(cancellationToken);
+    
+    // Use Newtonsoft.Json to handle polymorphic Update object correctly for Telegram.Bot v22
+    var update = Newtonsoft.Json.JsonConvert.DeserializeObject<Update>(json);
+    
+    if (update == null) return Results.BadRequest();
 
     await botService.HandleWebhookAsync(update, cancellationToken);
     return Results.Ok();

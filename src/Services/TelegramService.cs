@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Telegram.Bot;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
@@ -7,7 +8,7 @@ using TelegramChainBot.Options;
 
 namespace TelegramChainBot.Services;
 
-public sealed class TelegramService(ITelegramBotClient botClient, IOptions<BotOptions> options)
+public sealed class TelegramService(ITelegramBotClient botClient, IOptions<BotOptions> options, ILogger<TelegramService> logger)
 {
     private readonly BotOptions _options = options.Value;
 
@@ -106,6 +107,8 @@ public sealed class TelegramService(ITelegramBotClient botClient, IOptions<BotOp
             baseUrl = "https://" + baseUrl;
         }
 
-        return $"{baseUrl.TrimEnd('/')}/webapp/index.html?chain_id={chainId}";
+        var url = $"{baseUrl.TrimEnd('/')}/webapp/index.html?chain_id={chainId}";
+        logger.LogInformation("Generated WebApp URL: {Url}", url);
+        return url;
     }
 }
