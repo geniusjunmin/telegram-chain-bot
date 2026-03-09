@@ -18,21 +18,11 @@ public sealed class TelegramService(ITelegramBotClient botClient, IOptions<BotOp
         string text,
         CancellationToken cancellationToken)
     {
-        var webAppUrl = BuildWebAppUrl(chainId);
-        var inlineKeyboard = new InlineKeyboardMarkup(new[]
-        {
-            new[]
-            {
-                InlineKeyboardButton.WithCallbackData("参加接龙", $"join:{chainId}"),
-                InlineKeyboardButton.WithWebApp("打开 WebApp", new WebAppInfo { Url = webAppUrl })
-            }
-        });
-
         var message = await botClient.SendMessage(
             chatId: chatId,
             text: text,
             parseMode: ParseMode.Html,
-            replyMarkup: inlineKeyboard,
+            replyMarkup: BuildReplyMarkup(chatId, chainId),
             cancellationToken: cancellationToken);
 
         return (message.Chat.Id, message.MessageId);
@@ -45,16 +35,6 @@ public sealed class TelegramService(ITelegramBotClient botClient, IOptions<BotOp
         string text,
         CancellationToken cancellationToken)
     {
-        var webAppUrl = BuildWebAppUrl(chainId);
-        var inlineKeyboard = new InlineKeyboardMarkup(new[]
-        {
-            new[]
-            {
-                InlineKeyboardButton.WithCallbackData("参加接龙", $"join:{chainId}"),
-                InlineKeyboardButton.WithWebApp("打开 WebApp", new WebAppInfo { Url = webAppUrl })
-            }
-        });
-
         try
         {
             await botClient.EditMessageText(
@@ -62,7 +42,7 @@ public sealed class TelegramService(ITelegramBotClient botClient, IOptions<BotOp
                 messageId: (int)messageId,
                 text: text,
                 parseMode: ParseMode.Html,
-                replyMarkup: inlineKeyboard,
+                replyMarkup: BuildReplyMarkup(chatId, chainId),
                 cancellationToken: cancellationToken);
         }
         catch (Telegram.Bot.Exceptions.ApiRequestException ex) when (ex.Message.Contains("message is not modified"))
@@ -112,5 +92,25 @@ public sealed class TelegramService(ITelegramBotClient botClient, IOptions<BotOp
         var url = $"{baseUrl.TrimEnd('/')}/webapp/index.html?chain_id={chainId}";
         logger.LogInformation("Generated WebApp URL: {Url}", url);
         return url;
+    }
+
+    private InlineKeyboardMarkup BuildReplyMarkup(long chatId, long chainId)
+    {
+        var webAppUrl = BuildWebAppUrl(chainId);
+        var buttons = new List<InlineKeyboardButton>
+        {
+            InlineKeyboardButton.WithCallbackData("参加接龙", $"join:{chainId}")
+        };
+
+        if (chatId > 0)
+        {
+            buttons.Add(InlineKeyboardButton.WithWebApp("打开 WebApp", new WebAppInfo { Url = webAppUrl }));
+        }
+        else
+        {
+            buttons.Add(InlineKeyboardButton.WithUrl("打开页面", webAppUrl));
+        }
+
+        return new InlineKeyboardMarkup(new[] { buttons.ToArray() });
     }
 }

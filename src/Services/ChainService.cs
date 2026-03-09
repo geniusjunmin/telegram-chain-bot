@@ -28,6 +28,18 @@ public sealed class ChainService(AppDbContext db)
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task DeleteChainAsync(long chainId, CancellationToken cancellationToken)
+    {
+        var chain = await db.Chains.FirstOrDefaultAsync(c => c.Id == chainId, cancellationToken);
+        if (chain is null)
+        {
+            return;
+        }
+
+        db.Chains.Remove(chain);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task<Chain?> GetChainAsync(long chainId, CancellationToken cancellationToken)
     {
         return await db.Chains.FirstOrDefaultAsync(c => c.Id == chainId, cancellationToken);

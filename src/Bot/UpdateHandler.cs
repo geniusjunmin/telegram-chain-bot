@@ -43,12 +43,20 @@ public sealed class UpdateHandler(ChainService chainService, TelegramService tel
 
         var creatorId = message.From?.Id ?? 0;
         logger.LogInformation("Creating chain with Title: {Title}, Creator: {CreatorId}", title, creatorId);
-        
+
         var chainId = await chainService.CreateChainAsync(title, creatorId, cancellationToken);
-        var output = ChainService.FormatChainMessage(title, []);
-        
-        var (chatId, messageId) = await telegramService.SendChainMessageAsync(message.Chat.Id, chainId, output, cancellationToken);
-        await chainService.SetMessageInfoAsync(chainId, chatId, messageId, cancellationToken);
+
+        try
+        {
+            var output = ChainService.FormatChainMessage(title, []);
+            var (chatId, messageId) = await telegramService.SendChainMessageAsync(message.Chat.Id, chainId, output, cancellationToken);
+            await chainService.SetMessageInfoAsync(chainId, chatId, messageId, cancellationToken);
+        }
+        catch
+        {
+            await chainService.DeleteChainAsync(chainId, cancellationToken);
+            throw;
+        }
     }
 
     private static bool TryParseStartChainCommand(Message message, out string title)

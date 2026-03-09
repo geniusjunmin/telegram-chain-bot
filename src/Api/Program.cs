@@ -106,7 +106,7 @@ app.MapPost("/telegram/webhook/{token}", async (
     }
     catch (Exception ex)
     {
-        app.Logger.LogError(ex, "Failed to deserialize Telegram update");
+        app.Logger.LogError(ex, "Failed to handle Telegram update");
         return Results.BadRequest();
     }
     
