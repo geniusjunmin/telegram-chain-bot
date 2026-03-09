@@ -2,7 +2,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
-using Microsoft.AspNetCore.Http.Json;
 using Telegram.Bot;
 using Telegram.Bot.Types;
 using TelegramChainBot.Api;
@@ -14,12 +13,6 @@ using TelegramChainBot.Services;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Configuration.AddEnvironmentVariables();
-
-// 重要：配置 Minimal API 使用 Telegram.Bot v22 的 JSON 解析规则
-builder.Services.ConfigureHttpJsonOptions(options =>
-{
-    options.SerializerOptions.TypeInfoResolverChain.Insert(0, JsonBotAPI.Options.TypeInfoResolver);
-});
 
 builder.Services.Configure<BotOptions>(opts =>
 {
@@ -86,10 +79,10 @@ else
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
-// 让 .NET 自动解析 Update 对象
+// 彻底修复：不再直接使用 Update update 参数，而是手动用官方 Options 解析
 app.MapPost("/telegram/webhook/{token}", async (
     string token,
-    Update update,
+    HttpContext context,
     IOptions<BotOptions> options,
     BotService botService,
     CancellationToken cancellationToken) =>
@@ -99,7 +92,24 @@ app.MapPost("/telegram/webhook/{token}", async (
         return Results.Unauthorized();
     }
 
-    await botService.HandleWebhookAsync(update, cancellationToken);
+    try 
+    {
+        // 使用针对 Telegram.Bot v22 优化的 JsonBotAPI.Options
+        var update = await JsonSerializer.DeserializeAsync<Update>(
+            context.Request.Body, 
+            JsonBotAPI.Options, 
+            cancellationToken);
+
+        if (update == null) return Results.BadRequest();
+
+        await botService.HandleWebhookAsync(update, cancellationToken);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "Failed to deserialize Telegram update");
+        return Results.BadRequest();
+    }
+    
     return Results.Ok();
 });
 

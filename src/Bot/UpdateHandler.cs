@@ -28,30 +28,35 @@ public sealed class UpdateHandler(ChainService chainService, TelegramService tel
     private async Task HandleMessageAsync(Message message, CancellationToken cancellationToken)
     {
         var text = message.Text!.Trim();
+        logger.LogInformation("Processing message: {Text}", text);
         
-        // Handle "@bot /command" or "/command"
-        string? title = null;
-        if (text.Contains("/start_chain", StringComparison.OrdinalIgnoreCase))
-        {
-            var parts = text.Split(new[] { "/start_chain" }, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length > 0)
-            {
-                // If it was "@bot /start_chain something", parts might contain ["@bot ", " something"]
-                // We want the part after /start_chain
-                title = parts[^1].Trim();
-            }
-        }
-        else
+        // 更灵活地检测指令
+        if (!text.Contains("/start_chain", StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
 
+        string title;
+        var parts = text.Split(new[] { "/start_chain" }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length > 0)
+        {
+            // 获取指令后面的部分作为标题
+            title = parts[^1].Trim();
+        }
+        else
+        {
+            title = "聚餐接龙";
+        }
+
+        // 如果提取出来的标题像是一个 bot 的 handle (比如 @botname)，或者是空的
         if (string.IsNullOrWhiteSpace(title) || title.StartsWith("@"))
         {
             title = "聚餐接龙";
         }
 
         var creatorId = message.From?.Id ?? 0;
+        logger.LogInformation("Creating chain with Title: {Title}, Creator: {CreatorId}", title, creatorId);
+        
         var chainId = await chainService.CreateChainAsync(title, creatorId, cancellationToken);
         var output = ChainService.FormatChainMessage(title, []);
         
