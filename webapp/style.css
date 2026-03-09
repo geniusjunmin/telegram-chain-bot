@@ -24,6 +24,30 @@ h1 {
   font-size: 24px;
 }
 
+.field {
+  display: block;
+  margin-bottom: 14px;
+}
+
+.field span {
+  display: block;
+  margin-bottom: 6px;
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.field input {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 16px;
+  color: #0f172a;
+  background: #f8fafc;
+}
+
 ol {
   margin: 0;
   padding-left: 22px;

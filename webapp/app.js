@@ -1,5 +1,5 @@
-﻿const tg = window.Telegram.WebApp;
-tg.ready();
+const tg = window.Telegram?.WebApp;
+tg?.ready();
 
 const params = new URLSearchParams(window.location.search);
 const chainId = Number(params.get("chain_id") || 0);
@@ -8,12 +8,23 @@ const titleEl = document.getElementById("title");
 const listEl = document.getElementById("memberList");
 const joinBtn = document.getElementById("joinBtn");
 const statusEl = document.getElementById("status");
+const displayNameInput = document.getElementById("displayName");
 
-const user = tg.initDataUnsafe?.user;
+const user = tg?.initDataUnsafe?.user;
+const hasTelegramInitData = Boolean(tg?.initData && user);
 
-if (!chainId || !user) {
+if (user) {
+  displayNameInput.value = user.username || user.first_name || `user_${user.id}`;
+}
+
+if (!chainId) {
   joinBtn.disabled = true;
-  statusEl.textContent = "无法识别接龙或用户信息";
+  displayNameInput.disabled = true;
+  statusEl.textContent = "无法识别接龙信息";
+} else if (!hasTelegramInitData) {
+  joinBtn.disabled = true;
+  displayNameInput.disabled = true;
+  statusEl.textContent = "当前页面仅用于查看名单。群聊里请点击“私聊填写名字”后加入。";
 }
 
 async function loadChain() {
@@ -42,19 +53,32 @@ async function loadChain() {
 }
 
 async function joinChain() {
+  if (!hasTelegramInitData) {
+    statusEl.textContent = "当前页面不在 Telegram WebApp 中，无法识别你的身份。";
+    return;
+  }
+
+  const displayName = displayNameInput.value.trim();
+  if (!displayName) {
+    statusEl.textContent = "请先填写显示名字";
+    displayNameInput.focus();
+    return;
+  }
+
   joinBtn.disabled = true;
+  displayNameInput.disabled = true;
 
   const body = {
     chainId,
     userId: Number(user.id),
-    username: user.username || user.first_name || `user_${user.id}`
+    username: displayName
   };
 
   const resp = await fetch("/api/join", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Telegram-Init-Data": tg.initData
+      "X-Telegram-Init-Data": tg?.initData || ""
     },
     body: JSON.stringify(body)
   });
@@ -62,6 +86,7 @@ async function joinChain() {
   if (!resp.ok) {
     statusEl.textContent = "加入失败";
     joinBtn.disabled = false;
+    displayNameInput.disabled = false;
     return;
   }
 
@@ -69,6 +94,7 @@ async function joinChain() {
   statusEl.textContent = data.joined ? "加入成功" : "你已经参加过了";
   await loadChain();
   joinBtn.disabled = false;
+  displayNameInput.disabled = false;
 }
 
 joinBtn.addEventListener("click", joinChain);

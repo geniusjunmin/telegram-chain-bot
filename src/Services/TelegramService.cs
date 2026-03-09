@@ -22,7 +22,7 @@ public sealed class TelegramService(ITelegramBotClient botClient, IOptions<BotOp
             chatId: chatId,
             text: text,
             parseMode: ParseMode.Html,
-            replyMarkup: BuildReplyMarkup(chatId, chainId),
+            replyMarkup: await BuildReplyMarkupAsync(chatId, chainId, cancellationToken),
             cancellationToken: cancellationToken);
 
         return (message.Chat.Id, message.MessageId);
@@ -42,13 +42,40 @@ public sealed class TelegramService(ITelegramBotClient botClient, IOptions<BotOp
                 messageId: (int)messageId,
                 text: text,
                 parseMode: ParseMode.Html,
-                replyMarkup: BuildReplyMarkup(chatId, chainId),
+                replyMarkup: await BuildReplyMarkupAsync(chatId, chainId, cancellationToken),
                 cancellationToken: cancellationToken);
         }
         catch (Telegram.Bot.Exceptions.ApiRequestException ex) when (ex.Message.Contains("message is not modified"))
         {
             // Ignore if message is identical
         }
+    }
+
+    public async Task SendOpenChainWebAppAsync(
+        long chatId,
+        long chainId,
+        string title,
+        CancellationToken cancellationToken)
+    {
+        var webAppUrl = BuildWebAppUrl(chainId);
+        var replyMarkup = new InlineKeyboardMarkup(new[]
+        {
+            new[]
+            {
+                InlineKeyboardButton.WithWebApp("填写名字并加入", new WebAppInfo { Url = webAppUrl })
+            }
+        });
+
+        await botClient.SendMessage(
+            chatId: chatId,
+            text: $"请填写你要显示在接龙里的名字，然后加入“{title}”。",
+            replyMarkup: replyMarkup,
+            cancellationToken: cancellationToken);
+    }
+
+    public async Task SendTextMessageAsync(long chatId, string text, CancellationToken cancellationToken)
+    {
+        await botClient.SendMessage(chatId, text, cancellationToken: cancellationToken);
     }
 
     public async Task AnswerCallbackAsync(string callbackQueryId, string text, CancellationToken cancellationToken)
@@ -94,23 +121,41 @@ public sealed class TelegramService(ITelegramBotClient botClient, IOptions<BotOp
         return url;
     }
 
-    private InlineKeyboardMarkup BuildReplyMarkup(long chatId, long chainId)
+    private async Task<InlineKeyboardMarkup> BuildReplyMarkupAsync(long chatId, long chainId, CancellationToken cancellationToken)
     {
         var webAppUrl = BuildWebAppUrl(chainId);
-        var buttons = new List<InlineKeyboardButton>
-        {
-            InlineKeyboardButton.WithCallbackData("参加接龙", $"join:{chainId}")
-        };
 
         if (chatId > 0)
         {
-            buttons.Add(InlineKeyboardButton.WithWebApp("打开 WebApp", new WebAppInfo { Url = webAppUrl }));
-        }
-        else
-        {
-            buttons.Add(InlineKeyboardButton.WithUrl("打开页面", webAppUrl));
+            return new InlineKeyboardMarkup(new[]
+            {
+                new[]
+                {
+                    InlineKeyboardButton.WithWebApp("填写名字并加入", new WebAppInfo { Url = webAppUrl })
+                }
+            });
         }
 
-        return new InlineKeyboardMarkup(new[] { buttons.ToArray() });
+        var botUsername = await GetBotUsernameAsync(cancellationToken);
+        var joinUrl = $"https://t.me/{botUsername}?start=join_{chainId}";
+        return new InlineKeyboardMarkup(new[]
+        {
+            new[]
+            {
+                InlineKeyboardButton.WithUrl("私聊填写名字", joinUrl),
+                InlineKeyboardButton.WithUrl("查看名单", webAppUrl)
+            }
+        });
+    }
+
+    private async Task<string> GetBotUsernameAsync(CancellationToken cancellationToken)
+    {
+        var me = await botClient.GetMe(cancellationToken);
+        if (string.IsNullOrWhiteSpace(me.Username))
+        {
+            throw new InvalidOperationException("Bot username is required to generate join links.");
+        }
+
+        return me.Username;
     }
 }

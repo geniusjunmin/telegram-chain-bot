@@ -41,7 +41,7 @@ public static class ChainController
         var (added, members) = await chainService.JoinAsync(
             request.ChainId,
             request.UserId,
-            request.Username,
+            NormalizeDisplayName(request.Username, request.UserId),
             cancellationToken);
 
         var messageText = ChainService.FormatChainMessage(chain.Title, members);
@@ -81,6 +81,17 @@ public static class ChainController
             chain.CreatedAt,
             members
         });
+    }
+
+    private static string NormalizeDisplayName(string username, long userId)
+    {
+        var trimmed = username.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return $"user_{userId}";
+        }
+
+        return trimmed.Length <= 32 ? trimmed : trimmed[..32];
     }
 
     public sealed record JoinRequest(long ChainId, long UserId, string Username);

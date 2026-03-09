@@ -30,12 +30,21 @@ public sealed class UpdateHandler(ChainService chainService, TelegramService tel
         var text = message.Text!.Trim();
         logger.LogInformation("Processing message: {Text}", text);
 
-        if (!TryParseStartChainCommand(message, out var title))
+        if (TryParseStartChainCommand(message, out var title))
         {
+            await CreateChainAsync(message, title, cancellationToken);
             return;
         }
 
-        // 如果提取出来的标题像是一个 bot 的 handle (比如 @botname)，或者是空的
+        if (TryParseJoinChainCommand(message, out var chainId))
+        {
+            await SendJoinWebAppAsync(message, chainId, cancellationToken);
+            return;
+        }
+    }
+
+    private async Task CreateChainAsync(Message message, string title, CancellationToken cancellationToken)
+    {
         if (string.IsNullOrWhiteSpace(title) || title.StartsWith("@"))
         {
             title = "聚餐接龙";
@@ -57,6 +66,23 @@ public sealed class UpdateHandler(ChainService chainService, TelegramService tel
             await chainService.DeleteChainAsync(chainId, cancellationToken);
             throw;
         }
+    }
+
+    private async Task SendJoinWebAppAsync(Message message, long chainId, CancellationToken cancellationToken)
+    {
+        if (message.Chat.Type is not ChatType.Private)
+        {
+            return;
+        }
+
+        var chain = await chainService.GetChainAsync(chainId, cancellationToken);
+        if (chain is null)
+        {
+            await telegramService.SendTextMessageAsync(message.Chat.Id, "这个接龙不存在或已失效。", cancellationToken);
+            return;
+        }
+
+        await telegramService.SendOpenChainWebAppAsync(message.Chat.Id, chainId, chain.Title, cancellationToken);
     }
 
     private static bool TryParseStartChainCommand(Message message, out string title)
@@ -114,6 +140,41 @@ public sealed class UpdateHandler(ChainService chainService, TelegramService tel
 
         title = text[(commandIndex + command.Length)..].Trim();
         return true;
+    }
+
+    private static bool TryParseJoinChainCommand(Message message, out long chainId)
+    {
+        chainId = 0;
+        var text = message.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var commandEntity = message.Entities?
+            .FirstOrDefault(entity => entity.Type == MessageEntityType.BotCommand && entity.Offset == 0);
+
+        if (commandEntity is null)
+        {
+            return false;
+        }
+
+        var commandText = text.Substring(commandEntity.Offset, commandEntity.Length);
+        if (!commandText.StartsWith("/start", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var payload = text.Length > commandEntity.Length
+            ? text[commandEntity.Length..].Trim()
+            : string.Empty;
+
+        if (!payload.StartsWith("join_", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return long.TryParse(payload["join_".Length..], out chainId);
     }
 
     private async Task HandleCallbackAsync(CallbackQuery callback, CancellationToken cancellationToken)
