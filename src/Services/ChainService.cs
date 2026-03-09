@@ -60,11 +60,17 @@ public sealed class ChainService(AppDbContext db)
         CancellationToken cancellationToken)
     {
         var existing = await db.ChainMembers
-            .AsNoTracking()
             .FirstOrDefaultAsync(x => x.ChainId == chainId && x.UserId == userId, cancellationToken);
 
         if (existing is not null)
         {
+            var normalizedUsername = string.IsNullOrWhiteSpace(username) ? $"user_{userId}" : username;
+            if (!string.Equals(existing.Username, normalizedUsername, StringComparison.Ordinal))
+            {
+                existing.Username = normalizedUsername;
+                await db.SaveChangesAsync(cancellationToken);
+            }
+
             var currentMembers = await GetMembersAsync(chainId, cancellationToken);
             return (false, currentMembers);
         }

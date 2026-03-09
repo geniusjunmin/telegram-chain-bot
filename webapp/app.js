@@ -8,6 +8,7 @@ const titleEl = document.getElementById("title");
 const listEl = document.getElementById("memberList");
 const joinBtn = document.getElementById("joinBtn");
 const statusEl = document.getElementById("status");
+const displayNameField = document.getElementById("displayNameField");
 const displayNameInput = document.getElementById("displayName");
 
 const user = tg?.initDataUnsafe?.user;
@@ -24,6 +25,7 @@ if (!chainId) {
 } else if (!hasTelegramInitData) {
   joinBtn.disabled = true;
   displayNameInput.disabled = true;
+  displayNameField.hidden = true;
   statusEl.textContent = "当前页面仅用于查看名单。群聊里请点击“私聊填写名字”后加入。";
 }
 
@@ -91,7 +93,7 @@ async function joinChain() {
   }
 
   const data = await resp.json();
-  statusEl.textContent = data.joined ? "加入成功" : "你已经参加过了";
+  statusEl.textContent = data.joined ? "加入成功" : "名字已更新";
   await loadChain();
   joinBtn.disabled = false;
   displayNameInput.disabled = false;
