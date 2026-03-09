@@ -1,0 +1,53 @@
+﻿:root {
+  color-scheme: light;
+  font-family: "Segoe UI", "PingFang SC", sans-serif;
+}
+
+body {
+  margin: 0;
+  background: linear-gradient(140deg, #f8fafc, #e2e8f0);
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+}
+
+.container {
+  width: min(92vw, 420px);
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 12px 36px rgba(15, 23, 42, 0.12);
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: 24px;
+}
+
+ol {
+  margin: 0;
+  padding-left: 22px;
+  min-height: 120px;
+}
+
+button {
+  margin-top: 16px;
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 16px;
+  cursor: pointer;
+  color: white;
+  background: #0f766e;
+}
+
+button:disabled {
+  opacity: 0.6;
+}
+
+#status {
+  margin-top: 8px;
+  color: #334155;
+  font-size: 14px;
+}

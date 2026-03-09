@@ -1,0 +1,17 @@
+﻿services:
+  telegram-chain-bot:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: telegram-chain-bot
+    environment:
+      BOT_TOKEN: "${BOT_TOKEN}"
+      WEBHOOK_BASE_URL: "${WEBHOOK_BASE_URL}"
+      WEBHOOK_PATH: "/telegram/webhook"
+      SQLITE_PATH: "/app/data/chain.db"
+      ASPNETCORE_ENVIRONMENT: "Production"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../data:/app/data
+    restart: unless-stopped
