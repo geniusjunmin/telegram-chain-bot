@@ -23,12 +23,25 @@ public sealed class UpdateHandler(ChainService chainService, TelegramService tel
     private async Task HandleMessageAsync(Message message, CancellationToken cancellationToken)
     {
         var text = message.Text!.Trim();
-        if (!text.StartsWith("/start_chain", StringComparison.OrdinalIgnoreCase))
+        if (!text.StartsWith("/", StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
 
-        var title = text.Replace("/start_chain", string.Empty, StringComparison.OrdinalIgnoreCase).Trim();
+        // Split by space to get the command
+        var parts = text.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        var commandPart = parts[0];
+        
+        // Handle /command@botname
+        var actualCommand = commandPart.Split('@')[0];
+
+        // Check if it's our command
+        if (!actualCommand.Equals("/start_chain", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var title = parts.Length > 1 ? parts[1].Trim() : "聚餐接龙";
         if (string.IsNullOrWhiteSpace(title))
         {
             title = "聚餐接龙";
@@ -37,6 +50,7 @@ public sealed class UpdateHandler(ChainService chainService, TelegramService tel
         var creatorId = message.From?.Id ?? 0;
         var chainId = await chainService.CreateChainAsync(title, creatorId, cancellationToken);
         var output = ChainService.FormatChainMessage(title, []);
+        
         var (chatId, messageId) = await telegramService.SendChainMessageAsync(message.Chat.Id, chainId, output, cancellationToken);
         await chainService.SetMessageInfoAsync(chainId, chatId, messageId, cancellationToken);
     }
@@ -67,9 +81,14 @@ public sealed class UpdateHandler(ChainService chainService, TelegramService tel
             : user.FirstName;
 
         var (added, members) = await chainService.JoinAsync(chainId, user.Id, username, cancellationToken);
-        var messageText = ChainService.FormatChainMessage(chain.Title, members);
-
-        await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId, chainId, messageText, cancellationToken);
+        
+        // Answer early to stop the loading spinner
         await telegramService.AnswerCallbackAsync(callback.Id, added ? "加入成功" : "你已经参加过了", cancellationToken);
+
+        if (added)
+        {
+            var messageText = ChainService.FormatChainMessage(chain.Title, members);
+            await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId, chainId, messageText, cancellationToken);
+        }
     }
 }

@@ -76,5 +76,5 @@ public static class ChainController
         });
     }
 
-    private sealed record JoinRequest(long ChainId, long UserId, string Username);
+    public sealed record JoinRequest(long ChainId, long UserId, string Username);
 }

@@ -70,14 +70,36 @@ curl https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getWebhookInfo
 
 ## 5. Docker 运行
 
-在 `telegram-chain-bot/docker` 下运行：
+### 5.1 使用 Docker Compose (推荐)
+
+在项目根目录下运行：
 
 ```bash
-docker compose up --build
+docker compose -f docker/docker-compose.yml up -d
 ```
 
-服务默认监听：
-- `http://localhost:8080`
+### 5.2 使用 Docker Run 快速部署
+
+如果你想直接从 Docker Hub 拉取镜像运行，可以使用以下命令：
+
+```bash
+docker run -d \
+  --name telegram-chain-bot \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -v $(pwd)/data:/app/data \
+  -e BOT_TOKEN="你的_BOT_TOKEN" \
+  -e WEBHOOK_BASE_URL="https://your-domain.com" \
+  -e WEBHOOK_PATH="/telegram/webhook" \
+  -e SQLITE_PATH="/app/data/chain.db" \
+  <你的DOCKERHUB用户名>/telegram-chain-bot:latest
+```
+
+**参数说明：**
+- `-v $(pwd)/data:/app/data`: 将本地 `data` 目录挂载到容器内，用于持久化存储 SQLite 数据库。
+- `-e BOT_TOKEN`: 你的 Telegram Bot Token。
+- `-e WEBHOOK_BASE_URL`: 你的公网 HTTPS 域名。
+- `-p 8080:8080`: 映射端口。
 
 ## 6. 本地开发运行
 

@@ -55,13 +55,30 @@ await using (var scope = app.Services.CreateAsyncScope())
 }
 
 var webAppPath = Path.GetFullPath(Path.Combine(app.Environment.ContentRootPath, "..", "webapp"));
+app.Logger.LogInformation("Checking for webapp folder at: {Path}", webAppPath);
 if (Directory.Exists(webAppPath))
 {
+    app.Logger.LogInformation("Found webapp folder.");
     app.UseStaticFiles(new StaticFileOptions
     {
         FileProvider = new PhysicalFileProvider(webAppPath),
         RequestPath = "/webapp"
     });
+}
+else
+{
+    app.Logger.LogWarning("Webapp folder NOT found at {Path}", webAppPath);
+    // Fallback for different environments
+    var fallbackPath = Path.Combine(app.Environment.ContentRootPath, "webapp");
+    if (Directory.Exists(fallbackPath))
+    {
+        app.Logger.LogInformation("Found webapp folder at fallback path: {Path}", fallbackPath);
+        app.UseStaticFiles(new StaticFileOptions
+        {
+            FileProvider = new PhysicalFileProvider(fallbackPath),
+            RequestPath = "/webapp"
+        });
+    }
 }
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));

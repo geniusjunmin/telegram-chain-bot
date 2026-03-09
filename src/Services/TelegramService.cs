@@ -52,13 +52,20 @@ public sealed class TelegramService(ITelegramBotClient botClient, IOptions<BotOp
             }
         });
 
-        await botClient.EditMessageText(
-            chatId: chatId,
-            messageId: (int)messageId,
-            text: text,
-            parseMode: ParseMode.Html,
-            replyMarkup: inlineKeyboard,
-            cancellationToken: cancellationToken);
+        try
+        {
+            await botClient.EditMessageText(
+                chatId: chatId,
+                messageId: (int)messageId,
+                text: text,
+                parseMode: ParseMode.Html,
+                replyMarkup: inlineKeyboard,
+                cancellationToken: cancellationToken);
+        }
+        catch (Telegram.Bot.Exceptions.ApiRequestException ex) when (ex.Message.Contains("message is not modified"))
+        {
+            // Ignore if message is identical
+        }
     }
 
     public async Task AnswerCallbackAsync(string callbackQueryId, string text, CancellationToken cancellationToken)
