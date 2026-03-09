@@ -1,15 +1,15 @@
-﻿using Telegram.Bot.Types;
+﻿using Microsoft.Extensions.Logging;
+using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using TelegramChainBot.Services;
 
 namespace TelegramChainBot.Bot;
 
-public sealed class UpdateHandler(ChainService chainService, TelegramService telegramService)
+public sealed class UpdateHandler(ChainService chainService, TelegramService telegramService, ILogger<UpdateHandler> logger)
 {
     public async Task HandleAsync(Update update, CancellationToken cancellationToken)
     {
-        // For debugging
-        // Console.WriteLine($"Received update: {update.Type}");
+        logger.LogInformation("Received update type: {Type}, ID: {Id}", update.Type, update.Id);
 
         if (update.Type == UpdateType.Message && update.Message?.Text is not null)
         {
@@ -19,6 +19,8 @@ public sealed class UpdateHandler(ChainService chainService, TelegramService tel
 
         if (update.Type == UpdateType.CallbackQuery && update.CallbackQuery is not null)
         {
+            logger.LogInformation("Handling CallbackQuery from User: {UserId}, Data: {Data}", 
+                update.CallbackQuery.From.Id, update.CallbackQuery.Data);
             await HandleCallbackAsync(update.CallbackQuery, cancellationToken);
         }
     }
