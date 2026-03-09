@@ -1281,11 +1281,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "D:\\Desktop\\telegbot\\telegram-chain-bot\\src\\TelegramChainBot.csproj",
+      "projectUniqueName": "D:\\telegam-chain-bot\\src\\TelegramChainBot.csproj",
       "projectName": "TelegramChainBot",
-      "projectPath": "D:\\Desktop\\telegbot\\telegram-chain-bot\\src\\TelegramChainBot.csproj",
+      "projectPath": "D:\\telegam-chain-bot\\src\\TelegramChainBot.csproj",
       "packagesPath": "C:\\Users\\Administrator\\.nuget\\packages\\",
-      "outputPath": "D:\\Desktop\\telegbot\\telegram-chain-bot\\src\\obj\\",
+      "outputPath": "D:\\telegam-chain-bot\\src\\obj\\",
       "projectStyle": "PackageReference",
       "fallbackFolders": [
         "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"

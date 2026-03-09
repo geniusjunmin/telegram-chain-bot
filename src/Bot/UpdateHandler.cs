@@ -29,23 +29,10 @@ public sealed class UpdateHandler(ChainService chainService, TelegramService tel
     {
         var text = message.Text!.Trim();
         logger.LogInformation("Processing message: {Text}", text);
-        
-        // 更灵活地检测指令
-        if (!text.Contains("/start_chain", StringComparison.OrdinalIgnoreCase))
+
+        if (!TryParseStartChainCommand(message, out var title))
         {
             return;
-        }
-
-        string title;
-        var parts = text.Split(new[] { "/start_chain" }, StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length > 0)
-        {
-            // 获取指令后面的部分作为标题
-            title = parts[^1].Trim();
-        }
-        else
-        {
-            title = "聚餐接龙";
         }
 
         // 如果提取出来的标题像是一个 bot 的 handle (比如 @botname)，或者是空的
@@ -62,6 +49,63 @@ public sealed class UpdateHandler(ChainService chainService, TelegramService tel
         
         var (chatId, messageId) = await telegramService.SendChainMessageAsync(message.Chat.Id, chainId, output, cancellationToken);
         await chainService.SetMessageInfoAsync(chainId, chatId, messageId, cancellationToken);
+    }
+
+    private static bool TryParseStartChainCommand(Message message, out string title)
+    {
+        title = string.Empty;
+        var text = message.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        if (TryParseCommandEntity(message, text, out title))
+        {
+            return true;
+        }
+
+        return TryParseCommandFromPlainText(text, out title);
+    }
+
+    private static bool TryParseCommandEntity(Message message, string text, out string title)
+    {
+        title = string.Empty;
+
+        var commandEntity = message.Entities?
+            .FirstOrDefault(entity => entity.Type == MessageEntityType.BotCommand && entity.Offset == 0);
+
+        if (commandEntity is null)
+        {
+            return false;
+        }
+
+        var commandText = text.Substring(commandEntity.Offset, commandEntity.Length);
+        if (!commandText.StartsWith("/start_chain", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        title = text.Length > commandEntity.Length
+            ? text[commandEntity.Length..].Trim()
+            : string.Empty;
+
+        return true;
+    }
+
+    private static bool TryParseCommandFromPlainText(string text, out string title)
+    {
+        title = string.Empty;
+
+        const string command = "/start_chain";
+        var commandIndex = text.IndexOf(command, StringComparison.OrdinalIgnoreCase);
+        if (commandIndex < 0)
+        {
+            return false;
+        }
+
+        title = text[(commandIndex + command.Length)..].Trim();
+        return true;
     }
 
     private async Task HandleCallbackAsync(CallbackQuery callback, CancellationToken cancellationToken)
@@ -103,7 +147,7 @@ public sealed class UpdateHandler(ChainService chainService, TelegramService tel
                 await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId, chainId, messageText, cancellationToken);
             }
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             // Try to answer anyway if it hasn't been answered
             try { await telegramService.AnswerCallbackAsync(callback.Id, "出错了，请稍后再试", cancellationToken); } catch {}

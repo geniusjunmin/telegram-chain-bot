@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "hGRfTVAia84=",
+  "dgSpecHash": "umy+Iis0YBw=",
   "success": true,
-  "projectFilePath": "D:\\Desktop\\telegbot\\telegram-chain-bot\\src\\TelegramChainBot.csproj",
+  "projectFilePath": "D:\\telegam-chain-bot\\src\\TelegramChainBot.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\Administrator\\.nuget\\packages\\microsoft.data.sqlite.core\\8.0.13\\microsoft.data.sqlite.core.8.0.13.nupkg.sha512",
     "C:\\Users\\Administrator\\.nuget\\packages\\microsoft.entityframeworkcore\\8.0.13\\microsoft.entityframeworkcore.8.0.13.nupkg.sha512",
