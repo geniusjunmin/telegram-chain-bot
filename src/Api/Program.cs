@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http.Json;
 using Telegram.Bot;
 using Telegram.Bot.Types;
 using TelegramChainBot.Api;
@@ -13,6 +14,12 @@ using TelegramChainBot.Services;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Configuration.AddEnvironmentVariables();
+
+// 重要：配置 Minimal API 使用 Telegram.Bot v22 的 JSON 解析规则
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.TypeInfoResolverChain.Insert(0, JsonBotAPI.Options.TypeInfoResolver);
+});
 
 builder.Services.Configure<BotOptions>(opts =>
 {
@@ -56,10 +63,8 @@ await using (var scope = app.Services.CreateAsyncScope())
 }
 
 var webAppPath = Path.GetFullPath(Path.Combine(app.Environment.ContentRootPath, "..", "webapp"));
-app.Logger.LogInformation("Checking for webapp folder at: {Path}", webAppPath);
 if (Directory.Exists(webAppPath))
 {
-    app.Logger.LogInformation("Found webapp folder.");
     app.UseStaticFiles(new StaticFileOptions
     {
         FileProvider = new PhysicalFileProvider(webAppPath),
@@ -68,11 +73,9 @@ if (Directory.Exists(webAppPath))
 }
 else
 {
-    app.Logger.LogWarning("Webapp folder NOT found at {Path}", webAppPath);
     var fallbackPath = Path.Combine(app.Environment.ContentRootPath, "webapp");
     if (Directory.Exists(fallbackPath))
     {
-        app.Logger.LogInformation("Found webapp folder at fallback path: {Path}", fallbackPath);
         app.UseStaticFiles(new StaticFileOptions
         {
             FileProvider = new PhysicalFileProvider(fallbackPath),
@@ -83,9 +86,10 @@ else
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
+// 让 .NET 自动解析 Update 对象
 app.MapPost("/telegram/webhook/{token}", async (
     string token,
-    HttpContext context,
+    Update update,
     IOptions<BotOptions> options,
     BotService botService,
     CancellationToken cancellationToken) =>
@@ -95,23 +99,7 @@ app.MapPost("/telegram/webhook/{token}", async (
         return Results.Unauthorized();
     }
 
-    // Use System.Text.Json with JsonBotAPI.Options which is the standard way for v22
-    using var reader = new StreamReader(context.Request.Body);
-    var json = await reader.ReadToEndAsync(cancellationToken);
-    
-    try 
-    {
-        var update = JsonSerializer.Deserialize<Update>(json, JsonBotAPI.Options);
-        if (update == null) return Results.BadRequest();
-
-        await botService.HandleWebhookAsync(update, cancellationToken);
-    }
-    catch (Exception ex)
-    {
-        app.Logger.LogError(ex, "Error deserializing Telegram update");
-        return Results.BadRequest();
-    }
-    
+    await botService.HandleWebhookAsync(update, cancellationToken);
     return Results.Ok();
 });
 

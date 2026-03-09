@@ -18,12 +18,13 @@ public sealed class TelegramService(ITelegramBotClient botClient, IOptions<BotOp
         string text,
         CancellationToken cancellationToken)
     {
+        var webAppUrl = BuildWebAppUrl(chainId);
         var inlineKeyboard = new InlineKeyboardMarkup(new[]
         {
             new[]
             {
                 InlineKeyboardButton.WithCallbackData("参加接龙", $"join:{chainId}"),
-                InlineKeyboardButton.WithWebApp("打开 WebApp", new WebAppInfo(BuildWebAppUrl(chainId)))
+                InlineKeyboardButton.WithWebApp("打开 WebApp", new WebAppInfo { Url = webAppUrl })
             }
         });
 
@@ -44,12 +45,13 @@ public sealed class TelegramService(ITelegramBotClient botClient, IOptions<BotOp
         string text,
         CancellationToken cancellationToken)
     {
+        var webAppUrl = BuildWebAppUrl(chainId);
         var inlineKeyboard = new InlineKeyboardMarkup(new[]
         {
             new[]
             {
                 InlineKeyboardButton.WithCallbackData("参加接龙", $"join:{chainId}"),
-                InlineKeyboardButton.WithWebApp("打开 WebApp", new WebAppInfo(BuildWebAppUrl(chainId)))
+                InlineKeyboardButton.WithWebApp("打开 WebApp", new WebAppInfo { Url = webAppUrl })
             }
         });
 
