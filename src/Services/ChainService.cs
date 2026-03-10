@@ -106,7 +106,7 @@ public sealed class ChainService(AppDbContext db)
 
     public static string FormatChainMessage(string title, IReadOnlyList<ChainMember> members)
     {
-        var lines = new List<string> { $"🍽 {title}", string.Empty };
+        var lines = new List<string> { $"{title}", string.Empty };
 
         if (members.Count == 0)
         {
