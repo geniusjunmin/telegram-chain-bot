@@ -221,9 +221,11 @@ public sealed class UpdateHandler(ChainService chainService, TelegramService tel
             }
 
             var user = callback.From;
-            var telegramNickname = !string.IsNullOrWhiteSpace(user.Username)
-                ? user.Username
-                : user.FirstName;
+            var telegramNickname = string.Join(" ", new[] { user.FirstName, user.LastName }.Where(s => !string.IsNullOrWhiteSpace(s)));
+            if (string.IsNullOrWhiteSpace(telegramNickname))
+            {
+                telegramNickname = user.Username ?? $"user_{user.Id}";
+            }
 
             var (added, members) = await chainService.JoinAsync(chainId, user.Id, telegramNickname, telegramNickname, cancellationToken);
             

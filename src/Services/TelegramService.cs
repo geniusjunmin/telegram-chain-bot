@@ -142,7 +142,8 @@ public sealed class TelegramService(ITelegramBotClient botClient, IOptions<BotOp
         {
             new[]
             {
-                InlineKeyboardButton.WithUrl("私聊填写名字", joinUrl)
+                InlineKeyboardButton.WithCallbackData("参加", $"join:{chainId}"),
+                InlineKeyboardButton.WithUrl("DIY 名字参加", joinUrl)
             }
         });
     }
