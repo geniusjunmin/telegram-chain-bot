@@ -50,6 +50,17 @@ await using (var scope = app.Services.CreateAsyncScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await db.Database.EnsureCreatedAsync();
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE chain_members
+            ADD COLUMN TelegramNickname TEXT NOT NULL DEFAULT ''
+            """);
+    }
+    catch (Exception)
+    {
+        // Ignore if the column already exists.
+    }
 
     var tg = scope.ServiceProvider.GetRequiredService<TelegramService>();
     await tg.EnsureWebhookAsync(CancellationToken.None);

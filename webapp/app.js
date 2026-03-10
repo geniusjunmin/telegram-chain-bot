@@ -73,7 +73,8 @@ async function joinChain() {
   const body = {
     chainId,
     userId: Number(user.id),
-    username: displayName
+    username: displayName,
+    telegramNickname: user.username || user.first_name || `user_${user.id}`
   };
 
   const resp = await fetch("/api/join", {

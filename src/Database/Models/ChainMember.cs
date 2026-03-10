@@ -6,5 +6,6 @@ public sealed class ChainMember
     public long ChainId { get; set; }
     public long UserId { get; set; }
     public string Username { get; set; } = string.Empty;
+    public string TelegramNickname { get; set; } = string.Empty;
     public DateTimeOffset JoinTime { get; set; }
 }

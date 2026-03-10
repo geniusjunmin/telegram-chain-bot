@@ -27,6 +27,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.ToTable("chain_members");
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Username).HasMaxLength(128).IsRequired();
+            entity.Property(x => x.TelegramNickname).HasMaxLength(128).HasDefaultValue(string.Empty).IsRequired();
             entity.Property(x => x.JoinTime).HasConversion(converter).IsRequired();
             entity.HasIndex(x => new { x.ChainId, x.UserId }).IsUnique();
         });

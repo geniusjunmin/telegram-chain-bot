@@ -45,6 +45,8 @@ public sealed class UpdateHandler(ChainService chainService, TelegramService tel
 
     private async Task CreateChainAsync(Message message, string title, CancellationToken cancellationToken)
     {
+        title = SanitizeChainTitle(title);
+
         if (string.IsNullOrWhiteSpace(title) || title.StartsWith("@"))
         {
             title = "聚餐接龙";
@@ -177,6 +179,23 @@ public sealed class UpdateHandler(ChainService chainService, TelegramService tel
         return long.TryParse(payload["join_".Length..], out chainId);
     }
 
+    private static string SanitizeChainTitle(string title)
+    {
+        var trimmed = title.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return string.Empty;
+        }
+
+        var parts = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length > 1 && parts[^1].StartsWith("@", StringComparison.Ordinal))
+        {
+            return string.Join(' ', parts[..^1]);
+        }
+
+        return trimmed;
+    }
+
     private async Task HandleCallbackAsync(CallbackQuery callback, CancellationToken cancellationToken)
     {
         // Always answer early to stop the spinner
@@ -202,11 +221,11 @@ public sealed class UpdateHandler(ChainService chainService, TelegramService tel
             }
 
             var user = callback.From;
-            var username = !string.IsNullOrWhiteSpace(user.Username)
+            var telegramNickname = !string.IsNullOrWhiteSpace(user.Username)
                 ? user.Username
                 : user.FirstName;
 
-            var (added, members) = await chainService.JoinAsync(chainId, user.Id, username, cancellationToken);
+            var (added, members) = await chainService.JoinAsync(chainId, user.Id, telegramNickname, telegramNickname, cancellationToken);
             
             await telegramService.AnswerCallbackAsync(callback.Id, added ? "加入成功" : "你已经参加过了", cancellationToken);
 

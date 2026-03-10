@@ -38,10 +38,20 @@ public static class ChainController
         }
         // ...
 
+        var displayName = NormalizeDisplayName(request.Username, request.UserId);
+        var telegramNickname = NormalizeDisplayName(request.TelegramNickname, request.UserId);
+        logger.LogInformation(
+            "Join request accepted. ChainId: {ChainId}, UserId: {UserId}, DisplayName: {DisplayName}, TelegramNickname: {TelegramNickname}",
+            request.ChainId,
+            request.UserId,
+            displayName,
+            telegramNickname);
+
         var (added, members) = await chainService.JoinAsync(
             request.ChainId,
             request.UserId,
-            NormalizeDisplayName(request.Username, request.UserId),
+            displayName,
+            telegramNickname,
             cancellationToken);
 
         var messageText = ChainService.FormatChainMessage(chain.Title, members);
@@ -94,5 +104,5 @@ public static class ChainController
         return trimmed.Length <= 32 ? trimmed : trimmed[..32];
     }
 
-    public sealed record JoinRequest(long ChainId, long UserId, string Username);
+    public sealed record JoinRequest(long ChainId, long UserId, string Username, string TelegramNickname);
 }

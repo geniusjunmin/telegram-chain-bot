@@ -57,6 +57,7 @@ public sealed class ChainService(AppDbContext db)
         long chainId,
         long userId,
         string username,
+        string telegramNickname,
         CancellationToken cancellationToken)
     {
         var existing = await db.ChainMembers
@@ -65,9 +66,12 @@ public sealed class ChainService(AppDbContext db)
         if (existing is not null)
         {
             var normalizedUsername = string.IsNullOrWhiteSpace(username) ? $"user_{userId}" : username;
-            if (!string.Equals(existing.Username, normalizedUsername, StringComparison.Ordinal))
+            var normalizedTelegramNickname = string.IsNullOrWhiteSpace(telegramNickname) ? normalizedUsername : telegramNickname;
+            if (!string.Equals(existing.Username, normalizedUsername, StringComparison.Ordinal) ||
+                !string.Equals(existing.TelegramNickname, normalizedTelegramNickname, StringComparison.Ordinal))
             {
                 existing.Username = normalizedUsername;
+                existing.TelegramNickname = normalizedTelegramNickname;
                 await db.SaveChangesAsync(cancellationToken);
             }
 
@@ -80,6 +84,9 @@ public sealed class ChainService(AppDbContext db)
             ChainId = chainId,
             UserId = userId,
             Username = string.IsNullOrWhiteSpace(username) ? $"user_{userId}" : username,
+            TelegramNickname = string.IsNullOrWhiteSpace(telegramNickname)
+                ? (string.IsNullOrWhiteSpace(username) ? $"user_{userId}" : username)
+                : telegramNickname,
             JoinTime = DateTimeOffset.UtcNow
         });
 
@@ -109,9 +116,20 @@ public sealed class ChainService(AppDbContext db)
 
         for (var i = 0; i < members.Count; i++)
         {
-            lines.Add($"{i + 1}. {members[i].Username}");
+            lines.Add($"{i + 1}. {FormatMemberDisplayName(members[i])}");
         }
 
         return string.Join("\n", lines);
+    }
+
+    private static string FormatMemberDisplayName(ChainMember member)
+    {
+        if (string.IsNullOrWhiteSpace(member.TelegramNickname) ||
+            string.Equals(member.Username, member.TelegramNickname, StringComparison.Ordinal))
+        {
+            return member.Username;
+        }
+
+        return $"{member.Username}（{member.TelegramNickname}）";
     }
 }
