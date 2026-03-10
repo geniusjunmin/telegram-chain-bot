@@ -9,10 +9,19 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 {
     public DbSet<Chain> Chains => Set<Chain>();
     public DbSet<ChainMember> ChainMembers => Set<ChainMember>();
+    public DbSet<Admin> Admins => Set<Admin>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         var converter = new DateTimeOffsetToStringConverter();
+
+        modelBuilder.Entity<Admin>(entity =>
+        {
+            entity.ToTable("admins");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Username).HasMaxLength(50).IsRequired();
+            entity.HasIndex(x => x.Username).IsUnique();
+        });
 
         modelBuilder.Entity<Chain>(entity =>
         {

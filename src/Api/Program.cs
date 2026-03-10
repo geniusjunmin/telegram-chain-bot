@@ -43,6 +43,8 @@ builder.Services.AddScoped<TelegramService>();
 builder.Services.AddScoped<BotSecurityService>();
 builder.Services.AddScoped<UpdateHandler>();
 builder.Services.AddScoped<BotService>();
+builder.Services.AddScoped<AdminService>();
+builder.Services.AddSingleton<AdminSessionService>();
 
 var app = builder.Build();
 
@@ -50,6 +52,10 @@ await using (var scope = app.Services.CreateAsyncScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await db.Database.EnsureCreatedAsync();
+    
+    var adminService = scope.ServiceProvider.GetRequiredService<AdminService>();
+    await adminService.EnsureDefaultAdminAsync(CancellationToken.None);
+    
     try
     {
         await db.Database.ExecuteSqlRawAsync("""
@@ -125,5 +131,6 @@ app.MapPost("/telegram/webhook/{token}", async (
 });
 
 app.MapChainEndpoints();
+app.MapAdminEndpoints();
 
 app.Run();

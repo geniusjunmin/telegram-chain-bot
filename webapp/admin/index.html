@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>接龙机器人管理后台</title>
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+    <div id="login-page" class="page">
+        <div class="login-container">
+            <h1>管理员登录</h1>
+            <input type="text" id="username" placeholder="用户名" value="admin">
+            <input type="password" id="password" placeholder="密码">
+            <button onclick="login()">登录</button>
+            <p id="login-error" class="error"></p>
+        </div>
+    </div>
+
+    <div id="admin-page" class="page" style="display: none;">
+        <nav>
+            <div class="nav-brand">接龙管理后台</div>
+            <div class="nav-links">
+                <button onclick="showChains()">接龙列表</button>
+                <button onclick="showChangePassword()">修改密码</button>
+                <button onclick="logout()">退出</button>
+            </div>
+        </nav>
+
+        <main id="content">
+            <!-- 动态内容 -->
+        </main>
+    </div>
+
+    <!-- 模态框：编辑成员 -->
+    <div id="edit-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h2>编辑成员</h2>
+            <input type="hidden" id="edit-member-id">
+            <div class="form-group">
+                <label>用户名:</label>
+                <input type="text" id="edit-username">
+            </div>
+            <div class="form-group">
+                <label>TG 昵称:</label>
+                <input type="text" id="edit-nickname">
+            </div>
+            <div class="modal-actions">
+                <button onclick="saveMember()">保存</button>
+                <button onclick="closeModal()">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="admin.js"></script>
+</body>
+</html>
