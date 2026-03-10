@@ -12,9 +12,14 @@ public sealed class BotSecurityService(IOptions<BotOptions> options)
 
     public bool ValidateInitData(string? initData)
     {
+        return ValidateAndExtractUser(initData) != null;
+    }
+
+    public TelegramUser? ValidateAndExtractUser(string? initData)
+    {
         if (string.IsNullOrWhiteSpace(initData))
         {
-            return false;
+            return null;
         }
 
         var parsed = QueryHelpers.ParseQuery(initData)
@@ -22,7 +27,7 @@ public sealed class BotSecurityService(IOptions<BotOptions> options)
 
         if (!parsed.Remove("hash", out var hash) || string.IsNullOrWhiteSpace(hash))
         {
-            return false;
+            return null;
         }
 
         var checkString = string.Join("\n", parsed
@@ -35,6 +40,33 @@ public sealed class BotSecurityService(IOptions<BotOptions> options)
         using var hmac = new HMACSHA256(secret);
         var computed = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(checkString))).ToLowerInvariant();
 
-        return string.Equals(computed, hash, StringComparison.OrdinalIgnoreCase);
+        if (!string.Equals(computed, hash, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (parsed.TryGetValue("user", out var userJson))
+        {
+            try
+            {
+                var user = System.Text.Json.JsonSerializer.Deserialize<TelegramUser>(userJson, new System.Text.Json.JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+                return user;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        return null;
     }
 }
+
+public sealed record TelegramUser(
+    long Id,
+    string? Username,
+    [property: System.Text.Json.Serialization.JsonPropertyName("first_name")] string FirstName,
+    [property: System.Text.Json.Serialization.JsonPropertyName("last_name")] string? LastName);

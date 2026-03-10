@@ -12,7 +12,7 @@ const displayNameField = document.getElementById("displayNameField");
 const displayNameInput = document.getElementById("displayName");
 
 const user = tg?.initDataUnsafe?.user;
-const hasTelegramInitData = Boolean(tg?.initData && user);
+const hasTelegramInitData = Boolean(tg?.initData);
 
 if (user) {
   displayNameInput.value = user.username || user.first_name || `user_${user.id}`;
@@ -72,19 +72,24 @@ async function joinChain() {
 
   const body = {
     chainId,
-    userId: Number(user.id),
-    username: displayName,
-    telegramNickname: user.username || user.first_name || `user_${user.id}`
+    initData: tg.initData,
+    displayName: displayName
   };
 
   const resp = await fetch("/api/join", {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
-      "X-Telegram-Init-Data": tg?.initData || ""
+      "Content-Type": "application/json"
     },
     body: JSON.stringify(body)
   });
+
+  if (resp.status === 401) {
+    statusEl.textContent = "身份认证失败，请从 Telegram 重新打开 WebApp。";
+    joinBtn.disabled = false;
+    displayNameInput.disabled = false;
+    return;
+  }
 
   if (!resp.ok) {
     statusEl.textContent = "加入失败";
