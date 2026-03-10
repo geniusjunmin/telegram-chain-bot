@@ -24,10 +24,6 @@ builder.Services.Configure<BotOptions>(opts =>
 builder.Services.AddDbContext<AppDbContext>(opts =>
 {
     var dbPath = builder.Configuration["SQLITE_PATH"] ?? "data/chain.db";
-    if (!Path.IsPathRooted(dbPath))
-    {
-        dbPath = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", dbPath));
-    }
     opts.UseSqlite($"Data Source={dbPath}");
 });
 
@@ -54,14 +50,20 @@ await using (var scope = app.Services.CreateAsyncScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await db.Database.EnsureCreatedAsync();
-
-    // 仅在 Token 存在时尝试设置 Webhook，避免启动时崩溃
-    var options = scope.ServiceProvider.GetRequiredService<IOptions<BotOptions>>().Value;
-    if (!string.IsNullOrWhiteSpace(options.BotToken))
+    try
     {
-        var tg = scope.ServiceProvider.GetRequiredService<TelegramService>();
-        await tg.EnsureWebhookAsync(CancellationToken.None);
+        await db.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE chain_members
+            ADD COLUMN TelegramNickname TEXT NOT NULL DEFAULT ''
+            """);
     }
+    catch (Exception)
+    {
+        // Ignore if the column already exists.
+    }
+
+    var tg = scope.ServiceProvider.GetRequiredService<TelegramService>();
+    await tg.EnsureWebhookAsync(CancellationToken.None);
 }
 
 var webAppPath = Path.GetFullPath(Path.Combine(app.Environment.ContentRootPath, "..", "webapp"));

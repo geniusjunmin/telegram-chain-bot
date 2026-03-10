@@ -15,6 +15,7 @@ public static class ChainController
 
     private static async Task<IResult> JoinAsync(
         JoinRequest request,
+        HttpRequest httpRequest,
         ChainService chainService,
         BotSecurityService security,
         TelegramService telegramService,
@@ -22,17 +23,12 @@ public static class ChainController
         CancellationToken cancellationToken)
     {
         var logger = loggerFactory.CreateLogger("ChainController");
-        var user = security.ValidateAndExtractUser(request.InitData);
-        if (user is null)
+        var initData = httpRequest.Headers["X-Telegram-Init-Data"].ToString();
+        if (!security.ValidateInitData(initData))
         {
             logger.LogWarning("Invalid InitData received.");
             return Results.Unauthorized();
         }
-
-        var userId = user.Id;
-        var telegramNickname = string.IsNullOrWhiteSpace(user.Username)
-            ? user.FirstName + (string.IsNullOrWhiteSpace(user.LastName) ? "" : " " + user.LastName)
-            : user.Username;
 
         var chain = await chainService.GetChainAsync(request.ChainId, cancellationToken);
         if (chain is null)
@@ -40,18 +36,20 @@ public static class ChainController
             logger.LogWarning("Chain {ChainId} not found during Join.", request.ChainId);
             return Results.NotFound(new { error = "chain not found" });
         }
+        // ...
 
-        var displayName = NormalizeDisplayName(request.DisplayName, userId);
+        var displayName = NormalizeDisplayName(request.Username, request.UserId);
+        var telegramNickname = NormalizeDisplayName(request.TelegramNickname, request.UserId);
         logger.LogInformation(
             "Join request accepted. ChainId: {ChainId}, UserId: {UserId}, DisplayName: {DisplayName}, TelegramNickname: {TelegramNickname}",
             request.ChainId,
-            userId,
+            request.UserId,
             displayName,
             telegramNickname);
 
         var (added, members) = await chainService.JoinAsync(
             request.ChainId,
-            userId,
+            request.UserId,
             displayName,
             telegramNickname,
             cancellationToken);
@@ -106,5 +104,5 @@ public static class ChainController
         return trimmed.Length <= 32 ? trimmed : trimmed[..32];
     }
 
-    public sealed record JoinRequest(long ChainId, string InitData, string DisplayName);
+    public sealed record JoinRequest(long ChainId, long UserId, string Username, string TelegramNickname);
 }
