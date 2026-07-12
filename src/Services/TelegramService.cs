@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Telegram.Bot;
 using Telegram.Bot.Types;
@@ -8,13 +8,17 @@ using TelegramChainBot.Options;
 
 namespace TelegramChainBot.Services;
 
-public sealed class TelegramService(ITelegramBotClient botClient, IOptions<BotOptions> options, ILogger<TelegramService> logger)
+public class TelegramService(
+    ITelegramBotClient botClient, 
+    IOptions<BotOptions> options, 
+    TelegramMessageSyncService syncService,
+    ILogger<TelegramService> logger)
 {
     private readonly BotOptions _options = options.Value;
 
-    public async Task<(long ChatId, long MessageId)> SendChainMessageAsync(
+    public virtual async Task<(long ChatId, long MessageId)> SendChainMessageAsync(
         long chatId,
-        long chainId,
+        string publicId,
         string text,
         CancellationToken cancellationToken)
     {
@@ -22,42 +26,50 @@ public sealed class TelegramService(ITelegramBotClient botClient, IOptions<BotOp
             chatId: chatId,
             text: text,
             parseMode: ParseMode.Html,
-            replyMarkup: await BuildReplyMarkupAsync(chatId, chainId, cancellationToken),
+            replyMarkup: await BuildReplyMarkupAsync(chatId, publicId, cancellationToken),
             cancellationToken: cancellationToken);
 
         return (message.Chat.Id, message.MessageId);
     }
 
-    public async Task EditChainMessageAsync(
+    public virtual async Task EditChainMessageAsync(
         long chatId,
         long messageId,
-        long chainId,
+        string publicId,
         string text,
         CancellationToken cancellationToken)
     {
-        try
+        await syncService.ExecuteLockedAsync(chatId, messageId, async () =>
         {
-            await botClient.EditMessageText(
-                chatId: chatId,
-                messageId: (int)messageId,
-                text: text,
-                parseMode: ParseMode.Html,
-                replyMarkup: await BuildReplyMarkupAsync(chatId, chainId, cancellationToken),
-                cancellationToken: cancellationToken);
-        }
-        catch (Telegram.Bot.Exceptions.ApiRequestException ex) when (ex.Message.Contains("message is not modified"))
-        {
-            // Ignore if message is identical
-        }
+            try
+            {
+                await botClient.EditMessageText(
+                    chatId: chatId,
+                    messageId: (int)messageId,
+                    text: text,
+                    parseMode: ParseMode.Html,
+                    replyMarkup: await BuildReplyMarkupAsync(chatId, publicId, cancellationToken),
+                    cancellationToken: cancellationToken);
+            }
+            catch (Telegram.Bot.Exceptions.ApiRequestException ex) when (ex.Message.Contains("message is not modified"))
+            {
+                // Ignore if message is identical
+            }
+        }, cancellationToken);
     }
 
-    public async Task SendOpenChainWebAppAsync(
+    public virtual async Task LeaveChatAsync(long chatId, CancellationToken cancellationToken)
+    {
+        await botClient.LeaveChat(chatId, cancellationToken);
+    }
+
+    public virtual async Task SendOpenChainWebAppAsync(
         long chatId,
-        long chainId,
+        string publicId,
         string title,
         CancellationToken cancellationToken)
     {
-        var webAppUrl = BuildWebAppUrl(chainId);
+        var webAppUrl = BuildWebAppUrl(publicId);
         var replyMarkup = new InlineKeyboardMarkup(new[]
         {
             new[]
@@ -73,12 +85,12 @@ public sealed class TelegramService(ITelegramBotClient botClient, IOptions<BotOp
             cancellationToken: cancellationToken);
     }
 
-    public async Task SendTextMessageAsync(long chatId, string text, CancellationToken cancellationToken)
+    public virtual async Task SendTextMessageAsync(long chatId, string text, CancellationToken cancellationToken)
     {
         await botClient.SendMessage(chatId, text, cancellationToken: cancellationToken);
     }
 
-    public async Task AnswerCallbackAsync(string callbackQueryId, string text, CancellationToken cancellationToken)
+    public virtual async Task AnswerCallbackAsync(string callbackQueryId, string text, CancellationToken cancellationToken)
     {
         await botClient.AnswerCallbackQuery(
             callbackQueryId,
@@ -87,23 +99,27 @@ public sealed class TelegramService(ITelegramBotClient botClient, IOptions<BotOp
             cancellationToken: cancellationToken);
     }
 
-    public async Task EnsureWebhookAsync(CancellationToken cancellationToken)
+    public virtual async Task EnsureWebhookAsync(CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(_options.WebhookBaseUrl))
         {
             return;
         }
 
-        var url = $"{_options.WebhookBaseUrl.TrimEnd('/')}{_options.WebhookPath}/{_options.BotToken}";
-        await botClient.SetWebhook(url, cancellationToken: cancellationToken);
+        var url = $"{_options.WebhookBaseUrl.TrimEnd('/')}{_options.WebhookPath}";
+        await botClient.SetWebhook(
+            url: url,
+            secretToken: _options.WebhookSecret,
+            allowedUpdates: [UpdateType.Message, UpdateType.CallbackQuery],
+            cancellationToken: cancellationToken);
     }
 
-    private string BuildWebAppUrl(long chainId)
+    private string BuildWebAppUrl(string publicId)
     {
         var baseUrl = _options.WebhookBaseUrl;
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
-            return $"https://example.com/webapp/index.html?chain_id={chainId}";
+            return $"https://example.com/webapp/index.html?chain_id={publicId}";
         }
 
         // Force HTTPS for Telegram WebApp
@@ -116,14 +132,14 @@ public sealed class TelegramService(ITelegramBotClient botClient, IOptions<BotOp
             baseUrl = "https://" + baseUrl;
         }
 
-        var url = $"{baseUrl.TrimEnd('/')}/webapp/index.html?chain_id={chainId}";
+        var url = $"{baseUrl.TrimEnd('/')}/webapp/index.html?chain_id={publicId}";
         logger.LogInformation("Generated WebApp URL: {Url}", url);
         return url;
     }
 
-    private async Task<InlineKeyboardMarkup> BuildReplyMarkupAsync(long chatId, long chainId, CancellationToken cancellationToken)
+    private async Task<InlineKeyboardMarkup> BuildReplyMarkupAsync(long chatId, string publicId, CancellationToken cancellationToken)
     {
-        var webAppUrl = BuildWebAppUrl(chainId);
+        var webAppUrl = BuildWebAppUrl(publicId);
 
         if (chatId > 0)
         {
@@ -137,12 +153,12 @@ public sealed class TelegramService(ITelegramBotClient botClient, IOptions<BotOp
         }
 
         var botUsername = await GetBotUsernameAsync(cancellationToken);
-        var joinUrl = $"https://t.me/{botUsername}?start=join_{chainId}";
+        var joinUrl = $"https://t.me/{botUsername}?start=join_{publicId}";
         return new InlineKeyboardMarkup(new[]
         {
             new[]
             {
-                InlineKeyboardButton.WithCallbackData("参加", $"join:{chainId}"),
+                InlineKeyboardButton.WithCallbackData("参加", $"join:{publicId}"),
                 InlineKeyboardButton.WithUrl("DIY 名字参加", joinUrl)
             }
         });

@@ -7,7 +7,13 @@ using Telegram.Bot.Types;
 using TelegramChainBot.Api;
 using TelegramChainBot.Bot;
 using TelegramChainBot.Database;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.RateLimiting;
+using TelegramChainBot.Database.Models;
 using TelegramChainBot.Options;
+using TelegramChainBot.Security;
 using TelegramChainBot.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -19,12 +25,76 @@ builder.Services.Configure<BotOptions>(opts =>
     opts.BotToken = builder.Configuration["BOT_TOKEN"] ?? string.Empty;
     opts.WebhookBaseUrl = builder.Configuration["WEBHOOK_BASE_URL"];
     opts.WebhookPath = builder.Configuration["WEBHOOK_PATH"] ?? "/telegram/webhook";
+    opts.WebhookSecret = builder.Configuration["TELEGRAM_WEBHOOK_SECRET"];
 });
 
 builder.Services.AddDbContext<AppDbContext>(opts =>
 {
     var dbPath = builder.Configuration["SQLITE_PATH"] ?? "data/chain.db";
-    opts.UseSqlite($"Data Source={dbPath}");
+    opts.UseSqlite($"Data Source={dbPath};Cache=Shared;Default Timeout=5;Foreign Keys=True");
+});
+
+builder.Services.AddSingleton<IPasswordHasher<AdminAccount>, PasswordHasher<AdminAccount>>();
+
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(options =>
+    {
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+        options.Cookie.SameSite = SameSiteMode.Strict;
+        options.Cookie.Name = "AdminSession";
+        options.ExpireTimeSpan = TimeSpan.FromMinutes(30);
+        options.SlidingExpiration = true;
+        options.Events = new CookieAuthenticationEvents
+        {
+            OnRedirectToLogin = context =>
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return Task.CompletedTask;
+            },
+            OnRedirectToAccessDenied = context =>
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return Task.CompletedTask;
+            },
+            OnValidatePrincipal = async context =>
+            {
+                var sessionService = context.HttpContext.RequestServices.GetRequiredService<AdminSessionService>();
+                var sessionId = context.Principal?.FindFirst("SessionId")?.Value;
+                if (!sessionService.IsSessionActive(sessionId))
+                {
+                    context.RejectPrincipal();
+                    await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+                }
+            }
+        };
+    });
+
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("Admin.Read", policy =>
+        policy.RequireRole(AdminRole.RootAdmin.ToString(), AdminRole.OperatorAdmin.ToString(), AdminRole.AuditorAdmin.ToString()));
+    options.AddPolicy("Admin.ManageChains", policy =>
+        policy.RequireRole(AdminRole.RootAdmin.ToString(), AdminRole.OperatorAdmin.ToString()));
+    options.AddPolicy("Admin.ManageSettings", policy =>
+        policy.RequireRole(AdminRole.RootAdmin.ToString(), AdminRole.OperatorAdmin.ToString()));
+    options.AddPolicy("Admin.ManageAccounts", policy =>
+        policy.RequireRole(AdminRole.RootAdmin.ToString()));
+});
+
+builder.Services.AddAntiforgery(options =>
+{
+    options.HeaderName = "X-XSRF-TOKEN";
+});
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddFixedWindowLimiter("login-limiter", opt =>
+    {
+        opt.Window = TimeSpan.FromMinutes(1);
+        opt.PermitLimit = 5;
+        opt.QueueLimit = 0;
+    });
 });
 
 builder.Services.AddSingleton<ITelegramBotClient>(sp =>
@@ -40,37 +110,38 @@ builder.Services.AddSingleton<ITelegramBotClient>(sp =>
 
 builder.Services.AddScoped<ChainService>();
 builder.Services.AddScoped<TelegramService>();
+builder.Services.AddScoped<TelegramInitDataValidator>();
+builder.Services.AddScoped<WebhookSecretValidator>();
 builder.Services.AddScoped<BotSecurityService>();
 builder.Services.AddScoped<UpdateHandler>();
 builder.Services.AddScoped<BotService>();
 builder.Services.AddScoped<AdminService>();
 builder.Services.AddSingleton<AdminSessionService>();
+builder.Services.AddSingleton<TelegramMessageSyncService>();
+builder.Services.AddSingleton<GroupAdminValidator>();
+builder.Services.AddScoped<DatabaseBootstrapper>();
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<AuditLogService>();
+builder.Services.AddHostedService<DatabaseBackupService>();
 
 var app = builder.Build();
 
 await using (var scope = app.Services.CreateAsyncScope())
 {
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await db.Database.EnsureCreatedAsync();
+    var bootstrapper = scope.ServiceProvider.GetRequiredService<DatabaseBootstrapper>();
+    await bootstrapper.BootstrapAsync(CancellationToken.None);
     
     var adminService = scope.ServiceProvider.GetRequiredService<AdminService>();
     await adminService.EnsureDefaultAdminAsync(CancellationToken.None);
-    
-    try
-    {
-        await db.Database.ExecuteSqlRawAsync("""
-            ALTER TABLE chain_members
-            ADD COLUMN TelegramNickname TEXT NOT NULL DEFAULT ''
-            """);
-    }
-    catch (Exception)
-    {
-        // Ignore if the column already exists.
-    }
 
     var tg = scope.ServiceProvider.GetRequiredService<TelegramService>();
     await tg.EnsureWebhookAsync(CancellationToken.None);
 }
+
+app.UseRateLimiter();
+app.UseAuthentication();
+app.UseAuthorization();
+app.UseAntiforgery();
 
 var webAppPath = Path.GetFullPath(Path.Combine(app.Environment.ContentRootPath, "..", "webapp"));
 if (Directory.Exists(webAppPath))
@@ -96,21 +167,32 @@ else
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
-// 彻底修复：不再直接使用 Update update 参数，而是手动用官方 Options 解析
-app.MapPost("/telegram/webhook/{token}", async (
-    string token,
+// 彻底修复：使用固定路径 /telegram/webhook 并验证 X-Telegram-Bot-Api-Secret-Token 头
+app.MapPost("/telegram/webhook", async (
     HttpContext context,
-    IOptions<BotOptions> options,
+    WebhookSecretValidator secretValidator,
     BotService botService,
     CancellationToken cancellationToken) =>
 {
-    if (!string.Equals(token, options.Value.BotToken, StringComparison.Ordinal))
+    if (!context.Request.ContentType?.StartsWith("application/json", StringComparison.OrdinalIgnoreCase) ?? true)
+    {
+        return Results.StatusCode(StatusCodes.Status415UnsupportedMediaType);
+    }
+
+    var secretHeader = context.Request.Headers["X-Telegram-Bot-Api-Secret-Token"].ToString();
+    if (!secretValidator.Validate(secretHeader))
     {
         return Results.Unauthorized();
     }
 
     try 
     {
+        // Limit request size to 1MB (Telegram updates are usually small)
+        if (context.Request.ContentLength > 1024 * 1024)
+        {
+            return Results.BadRequest("Request body too large.");
+        }
+
         // 使用针对 Telegram.Bot v22 优化的 JsonBotAPI.Options
         var update = await JsonSerializer.DeserializeAsync<Update>(
             context.Request.Body, 
@@ -134,3 +216,5 @@ app.MapChainEndpoints();
 app.MapAdminEndpoints();
 
 app.Run();
+
+public partial class Program { }

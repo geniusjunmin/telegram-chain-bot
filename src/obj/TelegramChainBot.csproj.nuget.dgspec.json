@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "D:\\telegam-chain-bot\\src\\TelegramChainBot.csproj": {}
+    "D:\\Desktop\\mywserver\\telegram-chain-bot\\src\\TelegramChainBot.csproj": {}
   },
   "projects": {
-    "D:\\telegam-chain-bot\\src\\TelegramChainBot.csproj": {
+    "D:\\Desktop\\mywserver\\telegram-chain-bot\\src\\TelegramChainBot.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "D:\\telegam-chain-bot\\src\\TelegramChainBot.csproj",
+        "projectUniqueName": "D:\\Desktop\\mywserver\\telegram-chain-bot\\src\\TelegramChainBot.csproj",
         "projectName": "TelegramChainBot",
-        "projectPath": "D:\\telegam-chain-bot\\src\\TelegramChainBot.csproj",
+        "projectPath": "D:\\Desktop\\mywserver\\telegram-chain-bot\\src\\TelegramChainBot.csproj",
         "packagesPath": "C:\\Users\\Administrator\\.nuget\\packages\\",
-        "outputPath": "D:\\telegam-chain-bot\\src\\obj\\",
+        "outputPath": "D:\\Desktop\\mywserver\\telegram-chain-bot\\src\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
@@ -22,15 +22,16 @@
           "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
         ],
         "originalTargetFrameworks": [
-          "net8.0"
+          "net9.0"
         ],
         "sources": {
           "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "C:\\Program Files\\dotnet\\library-packs": {},
           "https://api.nuget.org/v3/index.json": {}
         },
         "frameworks": {
-          "net8.0": {
-            "targetAlias": "net8.0",
+          "net9.0": {
+            "targetAlias": "net9.0",
             "projectReferences": {}
           }
         },
@@ -47,12 +48,18 @@
         "SdkAnalysisLevel": "9.0.300"
       },
       "frameworks": {
-        "net8.0": {
-          "targetAlias": "net8.0",
+        "net9.0": {
+          "targetAlias": "net9.0",
           "dependencies": {
+            "Microsoft.EntityFrameworkCore.Design": {
+              "include": "Runtime, Build, Native, ContentFiles, Analyzers, BuildTransitive",
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[9.0.0, )"
+            },
             "Microsoft.EntityFrameworkCore.Sqlite": {
               "target": "Package",
-              "version": "[8.0.13, )"
+              "version": "[9.0.0, )"
             },
             "Telegram.Bot": {
               "target": "Package",
@@ -78,7 +85,7 @@
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.305/PortableRuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\9.0.313/PortableRuntimeIdentifierGraph.json"
         }
       }
     }

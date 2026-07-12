@@ -1,5 +1,6 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using TelegramChainBot.Database;
+using TelegramChainBot.Security;
 using TelegramChainBot.Services;
 
 namespace TelegramChainBot.Api;
@@ -8,101 +9,164 @@ public static class ChainController
 {
     public static IEndpointRouteBuilder MapChainEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapPost("/api/join", JoinAsync);
-        app.MapGet("/api/chains/{chainId:long}", GetChainAsync);
+        app.MapGet("/api/chains/{publicId}", GetChainAsync);
+        app.MapPost("/api/chains/{publicId}/join", JoinAsync);
+        app.MapPost("/api/chains/{publicId}/leave", LeaveAsync);
         return app;
     }
 
+    private static async Task<IResult> GetChainAsync(
+        string publicId,
+        HttpRequest httpRequest,
+        AppDbContext db,
+        ChainService chainService,
+        TelegramInitDataValidator validator,
+        CancellationToken cancellationToken)
+    {
+        var chain = await chainService.GetChainByPublicIdAsync(publicId, cancellationToken);
+        if (chain is null)
+        {
+            return Results.NotFound(new { error = "chain not found" });
+        }
+
+        var members = await db.ChainMembers
+            .Where(m => m.ChainId == chain.Id)
+            .OrderBy(m => m.JoinTime)
+            .Select(m => new { displayName = m.Username })
+            .ToListAsync(cancellationToken);
+
+        var hasJoined = false;
+        var initData = httpRequest.Headers["X-Telegram-Init-Data"].ToString();
+        if (!string.IsNullOrWhiteSpace(initData))
+        {
+            var validatedUser = validator.Validate(initData);
+            if (validatedUser != null)
+            {
+                hasJoined = await db.ChainMembers.AnyAsync(
+                    m => m.ChainId == chain.Id && m.UserId == validatedUser.UserId, 
+                    cancellationToken);
+            }
+        }
+
+        return Results.Ok(new
+        {
+            publicId = chain.PublicId,
+            title = chain.Title,
+            createdAt = chain.CreatedAt,
+            hasJoined,
+            members
+        });
+    }
+
     private static async Task<IResult> JoinAsync(
+        string publicId,
         JoinRequest request,
         HttpRequest httpRequest,
         ChainService chainService,
-        BotSecurityService security,
+        TelegramInitDataValidator validator,
         TelegramService telegramService,
         ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
     {
         var logger = loggerFactory.CreateLogger("ChainController");
         var initData = httpRequest.Headers["X-Telegram-Init-Data"].ToString();
-        if (!security.ValidateInitData(initData))
+        
+        var validatedUser = validator.Validate(initData);
+        if (validatedUser == null)
         {
-            logger.LogWarning("Invalid InitData received.");
+            logger.LogWarning("Invalid InitData received during Join.");
             return Results.Unauthorized();
         }
 
-        var chain = await chainService.GetChainAsync(request.ChainId, cancellationToken);
+        var chain = await chainService.GetChainByPublicIdAsync(publicId, cancellationToken);
         if (chain is null)
         {
-            logger.LogWarning("Chain {ChainId} not found during Join.", request.ChainId);
+            logger.LogWarning("Chain {PublicId} not found during Join.", publicId);
             return Results.NotFound(new { error = "chain not found" });
         }
-        // ...
 
-        var displayName = NormalizeDisplayName(request.Username, request.UserId);
-        var telegramNickname = NormalizeDisplayName(request.TelegramNickname, request.UserId);
+        var displayName = InputSanitizer.SanitizeName(request.DisplayName);
+        if (string.IsNullOrWhiteSpace(displayName))
+        {
+            return Results.BadRequest(new { error = "DisplayName is required." });
+        }
+
+        var telegramNickname = validatedUser.Username ?? validatedUser.FirstName;
+
         logger.LogInformation(
-            "Join request accepted. ChainId: {ChainId}, UserId: {UserId}, DisplayName: {DisplayName}, TelegramNickname: {TelegramNickname}",
-            request.ChainId,
-            request.UserId,
+            "Join request accepted. PublicId: {PublicId}, UserId: {UserId}, DisplayName: {DisplayName}, TelegramNickname: {TelegramNickname}",
+            publicId,
+            validatedUser.UserId,
             displayName,
             telegramNickname);
 
         var (added, members) = await chainService.JoinAsync(
-            request.ChainId,
-            request.UserId,
+            chain.Id,
+            validatedUser.UserId,
             displayName,
             telegramNickname,
             cancellationToken);
 
         var messageText = ChainService.FormatChainMessage(chain.Title, members);
-        await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId, request.ChainId, messageText, cancellationToken);
+        await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId, chain.PublicId, messageText, cancellationToken);
 
         return Results.Ok(new
         {
             success = true,
             joined = added,
-            updated_members = members.Select(x => new { x.UserId, x.Username, x.JoinTime })
+            updated_members = members.Select(x => new { displayName = x.Username })
         });
     }
 
-    private static async Task<IResult> GetChainAsync(long chainId, AppDbContext db, ILoggerFactory loggerFactory, CancellationToken cancellationToken)
+    private static async Task<IResult> LeaveAsync(
+        string publicId,
+        HttpRequest httpRequest,
+        ChainService chainService,
+        TelegramInitDataValidator validator,
+        TelegramService telegramService,
+        ILoggerFactory loggerFactory,
+        CancellationToken cancellationToken)
     {
         var logger = loggerFactory.CreateLogger("ChainController");
-        var chain = await db.Chains.FirstOrDefaultAsync(c => c.Id == chainId, cancellationToken);
+        var initData = httpRequest.Headers["X-Telegram-Init-Data"].ToString();
+        
+        var validatedUser = validator.Validate(initData);
+        if (validatedUser == null)
+        {
+            logger.LogWarning("Invalid InitData received during Leave.");
+            return Results.Unauthorized();
+        }
+
+        var chain = await chainService.GetChainByPublicIdAsync(publicId, cancellationToken);
         if (chain is null)
         {
-            logger.LogWarning("Chain {ChainId} not found during Get.", chainId);
+            logger.LogWarning("Chain {PublicId} not found during Leave.", publicId);
             return Results.NotFound(new { error = "chain not found" });
         }
 
-        var members = await db.ChainMembers
-            .Where(m => m.ChainId == chainId)
-            .OrderBy(m => m.JoinTime)
-            .Select(m => new { m.UserId, m.Username, m.JoinTime })
-            .ToListAsync(cancellationToken);
+        logger.LogInformation(
+            "Leave request accepted. PublicId: {PublicId}, UserId: {UserId}",
+            publicId,
+            validatedUser.UserId);
+
+        var (removed, members) = await chainService.LeaveAsync(
+            chain.Id,
+            validatedUser.UserId,
+            cancellationToken);
+
+        if (removed)
+        {
+            var messageText = ChainService.FormatChainMessage(chain.Title, members);
+            await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId, chain.PublicId, messageText, cancellationToken);
+        }
 
         return Results.Ok(new
         {
-            chain.Id,
-            chain.Title,
-            chain.CreatorId,
-            chain.MessageId,
-            chain.ChatId,
-            chain.CreatedAt,
-            members
+            success = true,
+            left = removed,
+            updated_members = members.Select(x => new { displayName = x.Username })
         });
     }
 
-    private static string NormalizeDisplayName(string username, long userId)
-    {
-        var trimmed = username.Trim();
-        if (string.IsNullOrWhiteSpace(trimmed))
-        {
-            return $"user_{userId}";
-        }
-
-        return trimmed.Length <= 32 ? trimmed : trimmed[..32];
-    }
-
-    public sealed record JoinRequest(long ChainId, long UserId, string Username, string TelegramNickname);
+    public sealed record JoinRequest(string DisplayName);
 }

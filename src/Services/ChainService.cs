@@ -1,15 +1,16 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using TelegramChainBot.Database;
 using TelegramChainBot.Database.Models;
 
 namespace TelegramChainBot.Services;
 
-public sealed class ChainService(AppDbContext db)
+public class ChainService(AppDbContext db)
 {
-    public async Task<long> CreateChainAsync(string title, long creatorId, CancellationToken cancellationToken)
+    public virtual async Task<Chain> CreateChainAsync(string title, long creatorId, CancellationToken cancellationToken)
     {
         var chain = new Chain
         {
+            PublicId = Guid.NewGuid().ToString("N"),
             Title = title,
             CreatorId = creatorId,
             CreatedAt = DateTimeOffset.UtcNow
@@ -17,10 +18,10 @@ public sealed class ChainService(AppDbContext db)
 
         db.Chains.Add(chain);
         await db.SaveChangesAsync(cancellationToken);
-        return chain.Id;
+        return chain;
     }
 
-    public async Task SetMessageInfoAsync(long chainId, long chatId, long messageId, CancellationToken cancellationToken)
+    public virtual async Task SetMessageInfoAsync(long chainId, long chatId, long messageId, CancellationToken cancellationToken)
     {
         var chain = await db.Chains.FirstAsync(c => c.Id == chainId, cancellationToken);
         chain.ChatId = chatId;
@@ -28,7 +29,7 @@ public sealed class ChainService(AppDbContext db)
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task DeleteChainAsync(long chainId, CancellationToken cancellationToken)
+    public virtual async Task DeleteChainAsync(long chainId, CancellationToken cancellationToken)
     {
         var chain = await db.Chains.FirstOrDefaultAsync(c => c.Id == chainId, cancellationToken);
         if (chain is null)
@@ -40,12 +41,17 @@ public sealed class ChainService(AppDbContext db)
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task<Chain?> GetChainAsync(long chainId, CancellationToken cancellationToken)
+    public virtual async Task<Chain?> GetChainAsync(long chainId, CancellationToken cancellationToken)
     {
         return await db.Chains.FirstOrDefaultAsync(c => c.Id == chainId, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<ChainMember>> GetMembersAsync(long chainId, CancellationToken cancellationToken)
+    public virtual async Task<Chain?> GetChainByPublicIdAsync(string publicId, CancellationToken cancellationToken)
+    {
+        return await db.Chains.FirstOrDefaultAsync(c => c.PublicId == publicId, cancellationToken);
+    }
+
+    public virtual async Task<IReadOnlyList<ChainMember>> GetMembersAsync(long chainId, CancellationToken cancellationToken)
     {
         return await db.ChainMembers
             .Where(m => m.ChainId == chainId)
@@ -53,7 +59,7 @@ public sealed class ChainService(AppDbContext db)
             .ToListAsync(cancellationToken);
     }
 
-    public async Task<(bool Added, IReadOnlyList<ChainMember> Members)> JoinAsync(
+    public virtual async Task<(bool Added, IReadOnlyList<ChainMember> Members)> JoinAsync(
         long chainId,
         long userId,
         string username,
@@ -104,32 +110,29 @@ public sealed class ChainService(AppDbContext db)
         return (added, members);
     }
 
-    public static string FormatChainMessage(string title, IReadOnlyList<ChainMember> members)
+    public virtual async Task<(bool Removed, IReadOnlyList<ChainMember> Members)> LeaveAsync(
+        long chainId,
+        long userId,
+        CancellationToken cancellationToken)
     {
-        var lines = new List<string> { $"{title}", string.Empty };
+        var existing = await db.ChainMembers
+            .FirstOrDefaultAsync(x => x.ChainId == chainId && x.UserId == userId, cancellationToken);
 
-        if (members.Count == 0)
+        if (existing is null)
         {
-            lines.Add("1. ");
-            return string.Join("\n", lines);
+            var currentMembers = await GetMembersAsync(chainId, cancellationToken);
+            return (false, currentMembers);
         }
 
-        for (var i = 0; i < members.Count; i++)
-        {
-            lines.Add($"{i + 1}. {FormatMemberDisplayName(members[i])}");
-        }
+        db.ChainMembers.Remove(existing);
+        await db.SaveChangesAsync(cancellationToken);
 
-        return string.Join("\n", lines);
+        var members = await GetMembersAsync(chainId, cancellationToken);
+        return (true, members);
     }
 
-    private static string FormatMemberDisplayName(ChainMember member)
+    public static string FormatChainMessage(string title, IReadOnlyList<ChainMember> members)
     {
-        if (string.IsNullOrWhiteSpace(member.TelegramNickname) ||
-            string.Equals(member.Username, member.TelegramNickname, StringComparison.Ordinal))
-        {
-            return member.Username;
-        }
-
-        return $"{member.Username}（{member.TelegramNickname}）";
+        return TelegramMessageFormatter.FormatChainMessage(title, members);
     }
 }

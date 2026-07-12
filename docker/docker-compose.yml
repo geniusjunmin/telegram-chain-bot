@@ -1,4 +1,4 @@
-﻿services:
+services:
   telegram-chain-bot:
     build:
       context: ..
@@ -8,7 +8,10 @@
       BOT_TOKEN: "${BOT_TOKEN}"
       WEBHOOK_BASE_URL: "${WEBHOOK_BASE_URL}"
       WEBHOOK_PATH: "/telegram/webhook"
+      TELEGRAM_WEBHOOK_SECRET: "${TELEGRAM_WEBHOOK_SECRET}"
+      BOT_OWNER_IDS: "${BOT_OWNER_IDS}"
       SQLITE_PATH: "/app/data/chain.db"
+      BACKUP_PATH: "/app/data/backups"
       ASPNETCORE_ENVIRONMENT: "Production"
     ports:
       - "8080:8080"

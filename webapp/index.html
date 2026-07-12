@@ -1,8 +1,9 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';" />
   <title>Telegram 接龙</title>
   <link rel="stylesheet" href="style.css?v=20260310-1" />
 </head>
@@ -15,6 +16,7 @@
     </label>
     <ol id="memberList"></ol>
     <button id="joinBtn">参加接龙</button>
+    <button id="leaveBtn" style="display: none; background: #be123c;">退出接龙</button>
     <p id="status"></p>
   </main>
 

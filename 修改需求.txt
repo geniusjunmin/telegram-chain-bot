@@ -1,0 +1,2084 @@
+# Telegram 接龙机器人生产级升级实施计划 V2
+
+## 一、升级目标
+
+本次升级不是单纯增加几个后台页面，而是将项目升级为具备以下能力的生产级 Telegram 接龙系统：
+
+1. 修复 Telegram WebApp 身份冒用、Webhook Token 暴露、后台 XSS 等高风险问题。
+2. 使用标准 ASP.NET Core 认证和授权机制，支持多管理员、角色权限、会话撤销和登录保护。
+3. 使用正式 EF Core Migration 管理 SQLite 数据库，并安全兼容当前已有数据库。
+4. 增加群聊授权、群级配置、接龙关闭、退出、容量、过期等完整业务能力。
+5. 增加分页、审计、软删除、备份恢复、健康检查和结构化日志。
+6. 重构后台为安全、响应式、可维护的模块化界面。
+7. 建立自动化测试、Docker 安全配置和 GitHub Actions 校验。
+
+---
+
+# 二、实施原则与强制约束
+
+执行 AI 必须遵守以下要求：
+
+1. 不得一次性重写整个项目。
+2. 按本文阶段依次实施，每个阶段单独提交。
+3. 每个阶段必须先完成数据库兼容和自动化测试，再修改下一阶段。
+4. 不得删除现有 SQLite 数据库或要求用户手工重建数据库。
+5. 不得继续使用 `EnsureCreatedAsync` 管理生产数据库。
+6. 不得编写“捕获所有异常然后忽略”的迁移代码。
+7. 不得自制 JWT 或自制管理员 Token 格式。
+8. 不得把认证 Token、Bot Token、CSRF Token写入页面 HTML、URL或日志。
+9. 不得把管理员认证 Token保存在 `localStorage` 或 `sessionStorage`。
+10. 不得直接把数据库实体作为 API 返回值。
+11. 所有数据库输入、Telegram 输入和前端输入必须验证长度及格式。
+12. 所有角色判断必须由后端完成，前端隐藏按钮仅作为界面优化。
+13. 所有涉及管理员、群权限、成员修改和接龙删除的操作必须记录审计日志。
+14. 所有生产配置必须通过环境变量、Docker Secret 或配置文件注入，不得写死。
+15. 不允许留下未实现的 `TODO`、空方法或仅用于演示的假数据。
+
+---
+
+# 三、技术栈调整
+
+## 3.1 运行时升级
+
+将项目从：
+
+```xml
+<TargetFramework>net8.0</TargetFramework>
+```
+
+升级为：
+
+```xml
+<TargetFramework>net10.0</TargetFramework>
+```
+
+同时执行：
+
+1. 将 Docker SDK 镜像升级为 `mcr.microsoft.com/dotnet/sdk:10.0`。
+2. 将 Runtime 镜像升级为 `mcr.microsoft.com/dotnet/aspnet:10.0`。
+3. 将 EF Core SQLite、EF Core Design 升级到与 .NET 10 对应的最新稳定补丁版本。
+4. 将 `Telegram.Bot` 升级到实施时兼容的最新稳定版本。
+5. 生成并提交 `packages.lock.json`。
+6. CI 中使用锁定恢复：
+
+```bash
+dotnet restore --locked-mode
+```
+
+必须先运行完整构建和测试，确认 Telegram.Bot 新版本没有 API 破坏性变化。
+
+---
+
+# 四、目录与项目结构重构
+
+建议调整为以下结构：
+
+```text
+src/
+├─ Api/
+│  ├─ Admin/
+│  │  ├─ AdminAuthEndpoints.cs
+│  │  ├─ AdminAccountEndpoints.cs
+│  │  ├─ AdminChainEndpoints.cs
+│  │  ├─ AdminChatEndpoints.cs
+│  │  ├─ AdminSettingEndpoints.cs
+│  │  └─ AuditLogEndpoints.cs
+│  ├─ Public/
+│  │  └─ ChainEndpoints.cs
+│  ├─ Telegram/
+│  │  └─ TelegramWebhookEndpoints.cs
+│  └─ Program.cs
+├─ Authorization/
+│  ├─ AdminPolicies.cs
+│  ├─ AdminRoles.cs
+│  ├─ AdminCookieEvents.cs
+│  └─ AntiforgeryEndpointFilter.cs
+├─ Bot/
+│  ├─ UpdateHandler.cs
+│  ├─ CommandHandler.cs
+│  ├─ CallbackHandler.cs
+│  ├─ ChatPermissionService.cs
+│  └─ TelegramUpdateWorker.cs
+├─ Contracts/
+│  ├─ Admin/
+│  ├─ Public/
+│  └─ Common/
+├─ Database/
+│  ├─ Models/
+│  ├─ Configurations/
+│  ├─ Migrations/
+│  ├─ AppDbContext.cs
+│  └─ DatabaseBootstrapper.cs
+├─ Options/
+│  ├─ BotOptions.cs
+│  ├─ AdminAuthOptions.cs
+│  ├─ SecurityOptions.cs
+│  └─ BackupOptions.cs
+├─ Security/
+│  ├─ TelegramInitDataValidator.cs
+│  ├─ WebhookSecretValidator.cs
+│  ├─ LegacyPasswordVerifier.cs
+│  └─ InputSanitizer.cs
+├─ Services/
+│  ├─ AdminAccountService.cs
+│  ├─ AuditLogService.cs
+│  ├─ ChainService.cs
+│  ├─ ChatManagementService.cs
+│  ├─ SystemSettingService.cs
+│  ├─ TelegramMessageSyncService.cs
+│  └─ DatabaseBackupService.cs
+└─ TelegramChainBot.csproj
+
+tests/
+├─ TelegramChainBot.UnitTests/
+└─ TelegramChainBot.IntegrationTests/
+
+webapp/
+├─ index.html
+├─ app.js
+├─ style.css
+└─ admin/
+   ├─ index.html
+   ├─ css/
+   │  ├─ variables.css
+   │  ├─ layout.css
+   │  ├─ components.css
+   │  └─ responsive.css
+   └─ js/
+      ├─ api.js
+      ├─ auth.js
+      ├─ router.js
+      ├─ dom.js
+      └─ views/
+         ├─ dashboard.js
+         ├─ chains.js
+         ├─ chats.js
+         ├─ admins.js
+         ├─ settings.js
+         └─ audit.js
+```
+
+控制单文件规模：
+
+* 普通 C# 文件尽量不超过 300 行。
+* 前端 JavaScript 文件尽量不超过 250 行。
+* Endpoint 文件只负责路由、输入验证和返回结果。
+* 业务规则全部放入 Service。
+* EF Core 配置放入独立的 `IEntityTypeConfiguration<T>` 文件。
+
+---
+
+# 五、P0：必须优先完成的安全修复
+
+这些内容必须在后台视觉重构前完成。
+
+## 5.1 修复 Telegram WebApp 身份冒用
+
+将当前：
+
+```json
+{
+  "chainId": 123,
+  "userId": 456,
+  "username": "...",
+  "telegramNickname": "..."
+}
+```
+
+改为：
+
+```json
+{
+  "chainPublicId": "随机公开ID",
+  "displayName": "用户填写的显示名称"
+}
+```
+
+服务器必须：
+
+1. 从 `X-Telegram-Init-Data` 读取原始 `initData`。
+2. 验证 Telegram HMAC 签名。
+3. 使用固定时间比较方法比较哈希。
+4. 解析并验证 `auth_date`。
+5. 默认拒绝超过 5 分钟的数据。
+6. 拒绝时间明显来自未来的数据。
+7. 从经过签名验证的 `user` JSON 中取得：
+
+   * Telegram User ID
+   * username
+   * first_name
+   * last_name
+8. 绝对不信任请求体传入的 User ID、Telegram username 或昵称。
+9. 验证器返回结构化对象：
+
+```csharp
+public sealed record ValidatedTelegramUser(
+    long UserId,
+    string? Username,
+    string FirstName,
+    string? LastName,
+    DateTimeOffset AuthenticatedAt);
+```
+
+10. 不得在日志中记录完整 `initData`、hash、用户完整请求头。
+
+## 5.2 使用随机 PublicId
+
+不能继续让 WebApp 使用连续递增的数据库 ID。
+
+在 `Chain` 中增加：
+
+```csharp
+public string PublicId { get; set; }
+```
+
+要求：
+
+* 使用安全随机值、UUID v7、ULID 或不少于 128 位随机数据。
+* 建立唯一索引。
+* 所有公开 API 和 WebApp URL使用 `PublicId`。
+* 数据库内部关联仍可使用 long 主键。
+* API 不再公开 `ChatId`、`MessageId`、`CreatorId` 和成员 Telegram User ID。
+
+## 5.3 修复 Webhook 安全
+
+移除：
+
+```text
+/telegram/webhook/{BOT_TOKEN}
+```
+
+改为固定路径：
+
+```text
+POST /telegram/webhook
+```
+
+新增配置：
+
+```env
+TELEGRAM_WEBHOOK_SECRET=<至少32字节随机字符串>
+```
+
+设置 Webhook 时传入 Telegram 的 `secret_token`。
+
+服务器验证请求头：
+
+```text
+X-Telegram-Bot-Api-Secret-Token
+```
+
+要求：
+
+1. 使用固定时间比较。
+2. 验证失败返回 401。
+3. 限制请求 Content-Type 为 JSON。
+4. 设置合理的请求体大小限制。
+5. Bot Token 不出现在 URL、日志和异常消息中。
+6. 设置明确的 `allowed_updates`。
+7. Webhook 路由单独应用限流策略。
+8. 处理 Telegram 重试时不得重复执行同一 Update。
+
+## 5.4 Telegram Update 幂等处理
+
+新增 `ProcessedTelegramUpdate` 或 `TelegramUpdateInbox` 表：
+
+```text
+UpdateId
+ReceivedAt
+ProcessedAt
+Status
+AttemptCount
+LastError
+```
+
+以 Telegram `Update.Id` 为唯一主键。
+
+处理流程：
+
+1. 接收 Update。
+2. 尝试插入 UpdateId。
+3. 如果已存在，直接返回 200。
+4. 首次收到则处理。
+5. 处理失败记录错误和重试次数。
+6. 不得因 Telegram 重试重复创建接龙或重复修改成员。
+
+生产模式建议使用持久化 Inbox 加后台 Worker：
+
+1. Webhook 验证后写入 Inbox。
+2. 立即返回 200。
+3. `BackgroundService` 异步处理。
+4. 实现有限次数重试和死信状态。
+5. 对单个 Update 的错误不得导致整个 Worker 停止。
+
+## 5.5 修复 HTML 注入和后台 XSS
+
+Telegram 消息当前使用 HTML ParseMode，因此：
+
+1. 接龙标题必须 HTML Encode。
+2. 成员显示名称必须 HTML Encode。
+3. 禁止控制字符。
+4. 限制连续空白和换行数量。
+5. 统一由 `TelegramMessageFormatter` 格式化消息。
+6. 不允许在其他位置手工拼接 Telegram HTML。
+
+管理后台：
+
+1. 禁止将接龙标题、成员名、错误信息直接拼入 `innerHTML`。
+2. 使用 `document.createElement`、`textContent` 和安全属性设置。
+3. 如确需模板，必须使用统一 `escapeHtml`，但优先使用 DOM API。
+4. 所有 `onclick="..."` 内联事件改为 `addEventListener`。
+5. 添加 Content Security Policy，并禁止内联脚本。
+6. 管理后台不得引入外部 Google Fonts；使用系统字体或将字体静态自托管。
+
+---
+
+# 六、数据库升级设计
+
+## 6.1 停止使用 EnsureCreated
+
+删除：
+
+```csharp
+db.Database.EnsureCreatedAsync()
+```
+
+以及所有启动时直接执行的 `ALTER TABLE`。
+
+统一改为：
+
+```csharp
+await db.Database.MigrateAsync(cancellationToken);
+```
+
+## 6.2 旧数据库接管流程
+
+因为当前数据库没有正式 Migration 历史，不能直接运行普通 Migration。
+
+新增 `DatabaseBootstrapper`，执行以下流程：
+
+### 新数据库
+
+1. 数据库文件不存在。
+2. 正常执行全部 EF Core Migration。
+3. 根据安全配置创建首个管理员。
+4. 默认启用白名单强制模式。
+
+### 旧数据库
+
+1. 检测到 `chains`、`chain_members`、`admins` 表。
+2. 未检测到 `__EFMigrationsHistory`。
+3. 在任何修改前创建数据库备份：
+
+```text
+data/backups/pre-migration-YYYYMMDD-HHmmss.db
+```
+
+4. 使用 `PRAGMA table_info` 验证旧表结构符合预期。
+5. 如果结构与预期不符，终止启动并输出清晰错误，不得继续修改。
+6. 创建 `__EFMigrationsHistory`。
+7. 写入专门的 Legacy Baseline Migration 记录。
+8. 再运行后续正式 Migration。
+9. 从现有 `chains.ChatId` 提取不同群聊，自动导入 `ManagedChat`。
+10. 为避免升级后 Bot 突然失效，旧数据库初始使用 `Audit` 白名单模式。
+11. 所有旧管理员角色初始化为：
+
+    * 第一个管理员：`SuperAdmin`
+    * 其他管理员：`Admin`
+12. 如检测到默认 `admin/admin123` 对应哈希：
+
+    * 设置 `MustChangePassword=true`
+    * 登录后只允许访问修改密码和退出接口
+    * 修改前禁止执行其他后台操作
+
+## 6.3 SQLite 运行参数
+
+数据库连接初始化时启用：
+
+```sql
+PRAGMA foreign_keys = ON;
+PRAGMA journal_mode = WAL;
+PRAGMA busy_timeout = 5000;
+```
+
+并明确说明：
+
+* SQLite 部署只允许单应用实例。
+* 不支持直接启动多个 Bot 容器共享同一个 SQLite 文件。
+* 将来需要水平扩容时再迁移 PostgreSQL。
+
+---
+
+# 七、数据库实体设计
+
+## 7.1 AdminAccount
+
+替换或扩展当前 `Admin`：
+
+```text
+Id
+Username
+NormalizedUsername
+PasswordHash
+Role
+IsActive
+MustChangePassword
+FailedLoginCount
+LockoutEnd
+SecurityStamp
+LastLoginAt
+PasswordChangedAt
+CreatedAt
+UpdatedAt
+CreatedByAdminId
+```
+
+约束：
+
+* `NormalizedUsername` 唯一索引。
+* 用户名大小写不敏感。
+* 禁止硬删除管理员，使用 `IsActive=false`。
+* 禁止停用或降级最后一个 SuperAdmin。
+* 管理员不能删除或停用自己。
+* 修改密码、角色、启用状态时更新 `SecurityStamp`，使旧会话失效。
+
+## 7.2 ManagedChat
+
+不要同时建立重复的 `WhitelistedChat` 和 `ChatSetting` 两张主表，统一为：
+
+```text
+ChatId
+Title
+ChatType
+AuthorizationStatus
+CreatePolicy
+IsJoinEnabled
+DefaultMaxMembers
+MaxActiveChains
+LastSeenAt
+ApprovedAt
+ApprovedByAdminId
+BlockedAt
+CreatedAt
+UpdatedAt
+Version
+```
+
+枚举建议：
+
+```text
+AuthorizationStatus:
+Pending
+Approved
+Blocked
+
+CreatePolicy:
+Everyone
+ChatAdministrators
+BotOwners
+Disabled
+```
+
+允许未来添加独立的 `ManagedChatSetting` 扩展表，但本轮常用字段直接强类型存储，避免任意字符串 Key-Value 配置造成拼写和类型错误。
+
+## 7.3 SystemSetting
+
+使用单行强类型设置，而不是任意 Key-Value：
+
+```text
+Id = 1
+WhitelistMode
+UnauthorizedChatBehavior
+DefaultCreatePolicy
+DefaultMaxMembers
+DefaultChainExpiryHours
+MaxActiveChainsPerChat
+TelegramInitDataMaxAgeSeconds
+DeletedDataRetentionDays
+RequireMfaForSuperAdmin
+UpdatedAt
+UpdatedByAdminId
+Version
+```
+
+白名单模式：
+
+```text
+Disabled
+Audit
+Enforced
+```
+
+含义：
+
+* `Disabled`：不检查白名单。
+* `Audit`：允许使用，但记录未授权群聊并在后台提示。
+* `Enforced`：只允许 Approved 群聊使用。
+
+## 7.4 Chain
+
+扩展为：
+
+```text
+Id
+PublicId
+ChatId
+CreatorTelegramUserId
+Title
+Status
+MessageId
+MaxMembers
+ExpiresAt
+CreatedAt
+UpdatedAt
+ClosedAt
+ClosedByTelegramUserId
+ClosedByAdminId
+DeletedAt
+DeletedByAdminId
+TelegramSyncStatus
+Version
+```
+
+状态：
+
+```text
+Creating
+Active
+Closed
+Expired
+Cancelled
+Failed
+Deleted
+```
+
+要求：
+
+* `MessageId` 在发送成功前允许为空。
+* 创建失败不得留下 Active 接龙。
+* 后台删除默认执行软删除。
+* 只有数据保留任务才物理清理过期软删除数据。
+* `PublicId` 唯一。
+* 为 `ChatId + Status + CreatedAt` 建立索引。
+* 为 `CreatedAt` 建立分页索引。
+
+## 7.5 ChainMember
+
+扩展为：
+
+```text
+Id
+ChainId
+TelegramUserId
+DisplayName
+TelegramUsername
+TelegramFullName
+Status
+JoinedAt
+UpdatedAt
+LeftAt
+RemovedAt
+RemovedByAdminId
+Version
+```
+
+成员状态：
+
+```text
+Active
+Left
+Removed
+```
+
+要求：
+
+* 同一个 Telegram 用户在同一个接龙中只能有一个 Active 记录。
+* 用户重新加入时可恢复旧记录或创建新历史记录，但行为必须统一。
+* 显示名称长度建议 1–32 字符。
+* 保存前去除控制字符和多余换行。
+* 不公开 Telegram User ID 给其他普通用户。
+
+## 7.6 AuditLog
+
+新增：
+
+```text
+Id
+ActorType
+ActorAdminId
+ActorTelegramUserId
+Action
+EntityType
+EntityId
+ChatId
+BeforeJson
+AfterJson
+IpAddressHash
+UserAgent
+CreatedAt
+CorrelationId
+Success
+FailureReason
+```
+
+记录操作：
+
+* 登录成功与失败。
+* 修改密码。
+* 创建、停用、修改管理员。
+* 修改角色。
+* 添加- 修改密码。
+* 创建、停用、修改管理员、批准、屏蔽群聊。
+* 修改系统设置和群设置。
+* 后台修改、移除成员。
+* 关闭、恢复、删除接龙。
+* Bot Owner 管理指令。
+* 数据库备份与恢复操作。
+
+不得在审计日志保存：
+
+* 密码。
+* Cookie。
+* CSRF Token。
+* Bot Token。
+* Telegram initData。
+* 完整敏感请求头。
+
+---
+
+# 八、管理员认证方案
+
+## 8.1 密码哈希
+
+不要手工维护 `PasswordSalt` 字段。
+
+使用：
+
+```csharp
+PasswordHasher<AdminAccount>
+```
+
+其哈希格式自身包含：
+
+* 算法版本。
+* 迭代参数。
+* 随机盐。
+* 派生结果。
+
+旧 SHA-256 兼容：
+
+1. 如果 PasswordHash 是 64 位十六进制格式，按旧 SHA-256 方式验证。
+2. 验证时使用固定时间比较。
+3. 验证成功后立即使用 `PasswordHasher` 重新生成哈希。
+4. 更新 `PasswordChangedAt`。
+5. 旧哈希升级失败不得影响当次登录，但必须记录错误。
+6. 新代码不再生成任何旧 SHA-256 哈希。
+
+## 8.2 Cookie Authentication
+
+使用 ASP.NET Core Cookie Authentication。
+
+建议配置：
+
+```text
+Cookie Name: __Host-TelegramChain.Admin
+HttpOnly: true
+Secure: Always
+SameSite: Strict
+Path: /
+Domain: 不设置
+ExpireTimeSpan: 8小时
+SlidingExpiration: true
+```
+
+Cookie Principal 包含：
+
+```text
+AdminId
+Username
+Role
+SecurityStamp
+MustChangePassword
+```
+
+增加 `AdminCookieEvents.ValidatePrincipal`：
+
+1. 定期读取管理员状态。
+2. 管理员被停用时立即拒绝。
+3. SecurityStamp 不一致时拒绝。
+4. 角色变化后旧 Cookie 失效。
+5. 强制修改密码期间只允许修改密码、查询本人和退出。
+
+Data Protection 密钥持久化到：
+
+```text
+/app/data/dataprotection-keys
+```
+
+并设置固定 Application Name，确保容器重启后 Cookie 仍可验证。
+
+## 8.3 CSRF 防护
+
+所有修改数据的后台接口必须验证 Antiforgery Token：
+
+```text
+POST
+PUT
+PATCH
+DELETE
+```
+
+提供：
+
+```text
+GET /api/admin/auth/csrf
+```
+
+前端取得 Token 后放入：
+
+```text
+X-CSRF-TOKEN
+```
+
+不得仅依靠 SameSite Cookie 代替 CSRF 防护。
+
+## 8.4 登录保护
+
+登录接口增加：
+
+1. 按 IP 加用户名组合限流。
+2. 连续失败锁定：
+
+   * 5 次失败后锁定 15 分钟。
+3. 返回统一错误：
+
+   * 不区分“用户名不存在”或“密码错误”。
+4. 成功登录后清零失败次数。
+5. 记录最后登录时间。
+6. 支持管理员主动退出。
+7. 修改密码后撤销其他旧会话。
+8. 返回 429 时包含 `Retry-After`。
+
+## 8.5 首个管理员初始化
+
+删除自动创建：
+
+```text
+admin / admin123
+```
+
+支持以下安全初始化方式：
+
+优先使用 Docker Secret：
+
+```env
+INITIAL_ADMIN_USERNAME=admin
+INITIAL_ADMIN_PASSWORD_FILE=/run/secrets/admin_password
+```
+
+仅在数据库完全没有管理员时读取。
+
+初始化完成后：
+
+* 不再重复读取。
+* 不在日志打印密码。
+* 建议设置 `MustChangePassword=true`。
+* 如果数据库没有管理员且没有初始化密码，生产环境必须终止启动并输出清晰错误。
+
+## 8.6 多因素认证
+
+为 SuperAdmin 增加 TOTP：
+
+```text
+MfaEnabled
+MfaSecretEncrypted
+RecoveryCodeHashes
+```
+
+要求：
+
+* TOTP 密钥使用 Data Protection 加密后存储。
+* Recovery Code 只保存哈希。
+* 新生产安装默认要求 SuperAdmin 启用 MFA。
+* 旧系统升级可给予一次性宽限期。
+* MFA 设置、关闭、恢复必须写入审计日志。
+
+---
+
+# 九、RBAC 权限设计
+
+角色保留：
+
+```text
+SuperAdmin
+Admin
+ReadOnly
+```
+
+但接口不要直接到处判断字符串角色，应使用 Authorization Policy。
+
+策略：
+
+```text
+Admin.Read
+Admin.ManageChains
+Admin.ManageChats
+Admin.ManageAccounts
+Admin.ManageSystem
+Admin.ViewAudit
+```
+
+映射：
+
+### SuperAdmin
+
+拥有全部权限：
+
+* 管理管理员。
+* 管理系统设置。
+* 管理群聊。
+* 管理接龙和成员。
+* 查看审计日志。
+* 管理备份。
+* 重置管理员密码。
+* 启用或关闭 MFA。
+
+### Admin
+
+允许：
+
+* 查看接龙和成员。
+* 修改、移除成员。
+* 关闭、恢复、软删除接龙。
+* 批准、屏蔽和配置群聊。
+* 查看基础审计日志。
+
+禁止：
+
+* 管理管理员账号。
+* 修改全局安全设置。
+* 修改 SuperAdmin。
+* 恢复数据库备份。
+
+### ReadOnly
+
+仅允许：
+
+* 查看 Dashboard。
+* 查看接龙。
+* 查看成员。
+* 查看群聊和非敏感设置。
+* 查看允许公开的审计摘要。
+
+禁止任何写操作。
+
+所有未授权访问：
+
+* 未登录返回 401。
+* 已登录但权限不足返回 403。
+* 不允许统一返回 401 掩盖权限问题。
+
+---
+
+# 十、后台 API 设计
+
+统一前缀：
+
+```text
+/api/admin
+```
+
+## 10.1 认证
+
+```text
+POST /auth/login
+POST /auth/logout
+GET  /auth/me
+GET  /auth/csrf
+POST /auth/change-password
+POST /auth/mfa/setup
+POST /auth/mfa/confirm
+POST /auth/mfa/disable
+```
+
+## 10.2 Dashboard
+
+```text
+GET /dashboard
+```
+
+返回：
+
+* Active 接龙数量。
+* 今日新增接龙。
+* 今日参加人数。
+* 已批准群聊。
+* Pending 群聊。
+* Telegram 同步失败数量。
+* 最近后台操作。
+* 数据库大小。
+* 最近备份状态。
+
+## 10.3 接龙管理
+
+```text
+GET    /chains
+GET    /chains/{publicId}
+POST   /chains/{publicId}/close
+POST   /chains/{publicId}/restore
+DELETE /chains/{publicId}
+POST   /chains/{publicId}/resync
+```
+
+查询参数：
+
+```text
+page
+pageSize
+keyword
+chatId
+status
+createdFrom
+createdTo
+sortBy
+sortDirection
+```
+
+限制：
+
+* `pageSize` 最大 100。
+* 默认 20。
+* 所有查询使用 `AsNoTracking()`。
+* 返回 DTO，不返回 EF 实体。
+* 删除是软删除。
+* Resync 用于 Telegram 消息被删除或编辑失败后的人工处理。
+
+## 10.4 成员管理
+
+```text
+GET    /chains/{publicId}/members
+PUT    /members/{memberId}
+DELETE /members/{memberId}
+POST   /members/{memberId}/restore
+```
+
+要求：
+
+* 修改名称后刷新 Telegram 消息。
+* 删除成员必须记录执行人。
+* 并发版本冲突返回 409。
+* 输入名称必须经过与 Bot 相同的验证器。
+
+## 10.5 群聊管理
+
+```text
+GET    /chats
+GET    /chats/{chatId}
+POST   /chats/{chatId}/approve
+POST   /chats/{chatId}/block
+POST   /chats/{chatId}/enable
+PUT    /chats/{chatId}/settings
+```
+
+支持：
+
+* Pending、Approved、Blocked 筛选。
+* 查看最后活动时间。
+* 查看 Active 接龙数量。
+* 修改创建权限、最大人数、最大活动接龙数。
+* 不允许删除存在历史记录的群聊，只能停用或屏蔽。
+
+## 10.6 管理员管理
+
+```text
+GET  /accounts
+POST /accounts
+PUT  /accounts/{id}
+POST /accounts/{id}/disable
+POST /accounts/{id}/enable
+POST /accounts/{id}/reset-password
+POST /accounts/{id}/revoke-sessions
+```
+
+创建和重置密码时：
+
+* 生成一次性临时密码，或由 SuperAdmin 输入临时密码。
+* 设置 `MustChangePassword=true`。
+* 临时密码不写入日志。
+* 后端永远不提供读取密码接口。
+
+## 10.7 系统设置
+
+```text
+GET /settings
+PUT /settings
+```
+
+使用强类型 DTO。
+
+保存时：
+
+1. 验证所有范围。
+2. 使用数据库事务。
+3. 更新 Version。
+4. 清理设置缓存。
+5. 写入 Before/After 审计日志。
+
+## 10.8 审计日志
+
+```text
+GET /audit-logs
+GET /audit-logs/{id}
+```
+
+支持：
+
+```text
+actor
+action
+entityType
+chatId
+success
+from
+to
+page
+pageSize
+```
+
+API 默认隐藏不必要的敏感字段。
+
+## 10.9 错误格式
+
+所有 API 使用统一 Problem Details：
+
+```json
+{
+  "type": "...",
+  "title": "Validation failed",
+  "status": 400,
+  "detail": "...",
+  "traceId": "...",
+  "errors": {
+    "displayName": ["显示名称最多32个字符"]
+  }
+}
+```
+
+不得把堆栈、SQL、数据库路径或 Token 返回给客户端。
+
+---
+
+# 十一、Bot 群聊权限升级
+
+## 11.1 白名单默认策略
+
+采用三状态模式，而不是简单开关。
+
+### 新安装
+
+默认：
+
+```text
+WhitelistMode=Enforced
+```
+
+Bot 只能在已批准群聊中创建接龙。
+
+### 旧系统升级
+
+默认：
+
+```text
+WhitelistMode=Audit
+```
+
+同时把历史 `chains.ChatId` 导入 Approved。
+
+管理员确认后再切换为 Enforced，避免升级后现有群聊突然不可用。
+
+## 11.2 BOT OWNER 配置
+
+使用复数配置：
+
+```env
+BOT_OWNER_IDS=123456789,987654321
+```
+
+要求：
+
+1. 只接受数字 ID。
+2. 启动时验证格式。
+3. Owner 管理命令只能在私聊中执行。
+4. 必须验证 `message.From.Id`。
+5. Owner 不是后台 SuperAdmin 的替代品。
+6. 所有 Owner 指令记录审计日志。
+7. 无 Owner 配置时，不注册这些管理指令。
+
+## 11.3 Owner 私聊命令
+
+建议：
+
+```text
+/allow_chat <chatId>
+/block_chat <chatId>
+/chat_info <chatId>
+/whitelist_mode audit
+/whitelist_mode enforced
+/system_status
+```
+
+限制：
+
+* 严格解析命令。
+* 参数数量不正确时返回帮助。
+* 不得通过模糊字符串包含判断命令。
+* 不得在群聊执行全局管理命令。
+* 修改全局设置后清理缓存。
+
+## 11.4 群管理员校验
+
+群设置为 `ChatAdministrators` 时：
+
+1. 使用 Telegram `GetChatMember` 查询发起用户。
+2. 接受 Creator 和 Administrator。
+3. 对结果缓存约 3–5 分钟。
+4. 用户角色变化后允许缓存自然过期。
+5. Telegram API 查询失败时，受限操作必须 Fail Closed。
+6. 不得因为权限查询失败而默认允许创建。
+7. 提示用户稍后重试，并记录结构化错误。
+
+## 11.5 支持的聊天类型
+
+本轮明确支持：
+
+* Group
+* Supergroup
+* Private Chat 中的接龙加入流程
+
+默认不支持在 Channel 中创建互动接龙。
+
+收到 Channel 命令时返回明确说明或静默忽略，由配置决定。
+
+## 11.6 接龙命令
+
+保留：
+
+```text
+/start_chain 接龙标题
+```
+
+新增：
+
+```text
+/close_chain
+/leave_chain
+/chain_settings
+/chain_admin_only on
+/chain_admin_only off
+/help
+```
+
+同时提供 Inline Keyboard：
+
+```text
+参加
+退出
+填写自定义名字
+关闭接龙
+```
+
+“关闭接龙”按钮只对以下用户生效：
+
+* 接龙创建者。
+* 当前群管理员。
+* Bot Owner。
+* 后台有管理权限的管理员。
+
+按钮是否显示不能代替服务端权限验证。
+
+## 11.7 命令解析修复
+
+删除当前在普通文本中通过 `IndexOf("/start_chain")` 查找命令的方式。
+
+只接受：
+
+* Telegram BotCommand Entity 位于 Offset 0。
+* 命令名完全匹配。
+* 允许 `/start_chain@BotUsername`。
+* 标题从命令实体结束位置开始提取。
+
+避免普通聊天文本中出现 `/start_chain` 时误触发。
+
+## 11.8 接龙业务规则
+
+创建接龙前检查：
+
+1. 群聊是否允许。
+2. 用户是否拥有创建权限。
+3. 群内 Active 接龙是否超过上限。
+4. 标题是否合法。
+5. 默认最大人数是否合法。
+6. 到期时间是否合法。
+
+加入前检查：
+
+1. 接龙是否存在。
+2. 状态必须是 Active。
+3. 是否已经过期。
+4. 是否已满。
+5. 当前群聊是否仍被允许。
+6. 用户是否已经加入。
+7. 显示名称是否合法。
+
+退出前检查：
+
+* 用户只能退出自己的成员记录。
+* 已被管理员移除的记录不能通过普通退出恢复。
+* 接龙 Closed 或 Deleted 后不得修改。
+
+## 11.9 Telegram 消息并发同步
+
+当前多个用户同时加入时，较晚完成的旧消息刷新可能覆盖较新的名单。
+
+新增 `TelegramMessageSyncService`：
+
+1. 按 ChainId 使用 Keyed Lock。
+2. 同一接龙的消息更新串行执行。
+3. 可增加 200–500ms 去抖，将短时间多个加入合并为一次消息刷新。
+4. 每次刷新都从数据库重新读取最新 Active 成员。
+5. 不使用调用方传入的旧成员列表作为最终消息来源。
+6. Telegram 返回限流时读取 RetryAfter 并延迟重试。
+7. 消息被删除或 Bot 无权编辑时：
+
+   * 设置 `TelegramSyncStatus=Failed`
+   * 记录错误
+   * 后台显示“重新发送/重新同步”操作
+8. 不得因为 Telegram 消息编辑失败而回滚用户已经成功加入的数据库记录。
+
+## 11.10 消息格式与人数较多处理
+
+统一消息结构：
+
+```text
+接龙标题
+
+1. 张三
+2. 李四
+3. 王五
+
+共 3 人
+状态：进行中
+```
+
+要求：
+
+* 使用统一 HTML 编码。
+* 控制最终消息长度。
+* 人数过多时仅展示前若干成员，并显示剩余人数。
+* WebApp 可查看完整名单。
+* 接龙关闭后按钮切换为只读状态。
+* 标题、成员名、状态均由 Formatter 统一生成。
+
+---
+
+# 十二、公开 WebApp 和公开 API
+
+## 12.1 API 最小化
+
+公开接口：
+
+```text
+GET  /api/chains/{publicId}
+POST /api/chains/{publicId}/join
+POST /api/chains/{publicId}/leave
+```
+
+公开查询只返回：
+
+```text
+publicId
+title
+status
+maxMembers
+memberCount
+expiresAt
+members.displayName
+```
+
+禁止返回：
+
+```text
+数据库内部ID
+Telegram User ID
+ChatId
+MessageId
+CreatorId
+管理员信息
+```
+
+## 12.2 WebApp 界面
+
+新增：
+
+* 当前接龙状态。
+* 当前人数和人数限制。
+* 到期时间。
+* 加入按钮。
+* 退出按钮。
+* 加载中、失败、已满、已关闭、已过期状态。
+* Telegram 主题色适配。
+* 安全区域适配。
+* 防止重复点击。
+* 请求失败后的重试提示。
+
+用户身份始终以后端验证的 Telegram initData 为准。
+
+---
+
+# 十三、后台管理 UI 重构
+
+## 13.1 视觉目标
+
+采用现代但克制的后台风格：
+
+* 深色和浅色主题。
+* 清晰的间距和层级。
+* 适量阴影，不使用大面积高强度发光。
+* 毛玻璃仅用于导航或弹窗，不影响文字可读性。
+* 支持桌面、平板和手机。
+* 支持 `prefers-reduced-motion`。
+* 符合基本无障碍要求。
+
+## 13.2 功能页面
+
+### Dashboard
+
+* 数据概览。
+* Pending 群聊。
+* Telegram 同步失败。
+* 最近审计事件。
+* 最近备份状态。
+
+### 接龙管理
+
+* 分页。
+* 搜索。
+* 按群聊、状态、日期筛选。
+* 查看成员。
+* 关闭、恢复、软删除。
+* Telegram 重新同步。
+
+### 群聊管理
+
+* Pending 审批。
+* Approved 和 Blocked 列表。
+* 群级设置编辑。
+* 最近活动时间。
+* 活动接龙数量。
+
+### 管理员管理
+
+仅 SuperAdmin 可见：
+
+* 创建管理员。
+* 修改角色。
+* 启用、停用。
+* 重置密码。
+* 撤销会话。
+* MFA 状态。
+
+### 系统设置
+
+仅 SuperAdmin 可编辑：
+
+* 白名单模式。
+* 默认创建权限。
+* 默认人数限制。
+* 默认过期时间。
+* 数据保留周期。
+* MFA 要求。
+
+### 审计日志
+
+* 条件筛选。
+* 分页。
+* 详情弹窗。
+* Before/After 差异展示。
+
+## 13.3 前端权限处理
+
+登录后调用：
+
+```text
+GET /api/admin/auth/me
+```
+
+后端返回：
+
+```json
+{
+  "id": 1,
+  "username": "admin",
+  "role": "SuperAdmin",
+  "permissions": [
+    "Admin.Read",
+    "Admin.ManageChains",
+    "Admin.ManageAccounts"
+  ],
+  "mustChangePassword": false
+}
+```
+
+前端根据 permissions 控制页面和按钮。
+
+禁止依赖缓存的 `adminRole` 判断权限。
+
+## 13.4 安全要求
+
+1. Cookie 不由 JavaScript 读取。
+2. Fetch 使用：
+
+```javascript
+credentials: "same-origin"
+```
+
+3. 修改请求自动附带 CSRF Header。
+4. 401 自动跳转登录。
+5. 403 显示权限不足，不清除有效会话。
+6. 所有服务端文本通过 `textContent` 写入。
+7. 删除接龙等危险操作使用二次确认。
+8. 高风险操作要求输入接龙标题或管理员用户名确认。
+9. 禁止内联脚本和内联事件。
+10. 错误信息不得直接显示原始服务器异常。
+
+---
+
+# 十四、日志、监控与健康检查
+
+## 14.1 结构化日志
+
+日志必须包含适当的：
+
+```text
+TraceId
+TelegramUpdateId
+ChainId
+ChainPublicId
+ChatId
+AdminId
+Action
+DurationMs
+Result
+```
+
+不得记录：
+
+```text
+Bot Token
+Webhook Secret
+管理员密码
+Cookie
+Antiforgery Token
+完整 Telegram initData
+TOTP Secret
+Recovery Code
+```
+
+## 14.2 健康检查
+
+增加：
+
+```text
+GET /health/live
+GET /health/ready
+```
+
+`live`：
+
+* 应用进程可响应即可。
+
+`ready`：
+
+* 数据库可连接。
+* Migration 已完成。
+* 必要配置存在。
+* Data Protection 目录可写。
+* 后台 Worker 正常运行。
+
+不要在每次健康检查中实时请求 Telegram API，避免健康探测本身产生外部依赖和限流。
+
+## 14.3 异常处理中间件
+
+生产环境：
+
+* 使用统一异常处理。
+* 返回 Problem Details。
+* 日志记录完整异常。
+* 客户端只看到 TraceId 和安全错误摘要。
+* 开启 HSTS。
+* 正确处理反向代理 Forwarded Headers。
+* 只信任明确配置的代理地址或网络。
+
+---
+
+# 十五、SQLite 备份与恢复
+
+## 15.1 自动备份
+
+新增 `DatabaseBackupService`：
+
+* 每日备份。
+* 数据库迁移前强制备份。
+* 使用 SQLite Backup API 或 `VACUUM INTO`。
+* 不直接复制正在写入的 WAL 数据库文件。
+* 备份文件名包含 UTC 时间。
+* 默认保留：
+
+  * 最近 7 个每日备份。
+  * 最近 4 个每周备份。
+* 清理前验证至少存在一个有效备份。
+
+## 15.2 备份位置
+
+不要只保存在数据库同一个磁盘。
+
+至少支持：
+
+```env
+BACKUP_PATH=/app/backups
+```
+
+生产环境建议将 `/app/backups` 挂载到另一个 Volume 或定期同步到远程存储。
+
+## 15.3 恢复流程
+
+恢复不得直接通过普通后台按钮立即执行。
+
+要求：
+
+1. 仅 SuperAdmin。
+2. 再次验证密码和 MFA。
+3. 进入维护状态。
+4. 停止处理 Telegram Update。
+5. 备份当前数据库。
+6. 验证备份文件。
+7. 替换数据库。
+8. 运行 Migration 检查。
+9. 重启应用。
+10. 写入独立恢复日志。
+
+本轮可以先提供命令行恢复工具和文档，后台只提供备份下载与状态查看。
+
+---
+
+# 十六、Docker 和部署安全
+
+## 16.1 Dockerfile
+
+要求：
+
+1. 使用 .NET 10 多阶段构建。
+2. Runtime 阶段创建非 root 用户。
+3. `/app/data`、`/app/backups`、Data Protection 目录归该用户所有。
+4. 容器使用非 root 用户运行。
+5. 增加 Healthcheck。
+6. 不把 `.env`、数据库、测试输出复制进镜像。
+7. 使用 Release 构建。
+8. CI 中执行测试后才能构建镜像。
+
+示例原则：
+
+```dockerfile
+USER app
+ENTRYPOINT ["dotnet", "TelegramChainBot.dll"]
+```
+
+## 16.2 Docker Compose
+
+增加：
+
+```yaml
+restart: unless-stopped
+read_only: true
+tmpfs:
+  - /tmp
+cap_drop:
+  - ALL
+security_opt:
+  - no-new-privileges:true
+```
+
+开放端口时，若前面有 Nginx，使用：
+
+```yaml
+ports:
+  - "127.0.0.1:8080:8080"
+```
+
+避免直接暴露到公网。
+
+增加 Volume：
+
+```yaml
+volumes:
+  - ../data:/app/data
+  - ../backups:/app/backups
+```
+
+增加 Healthcheck 和资源限制。
+
+## 16.3 Secret 管理
+
+敏感配置优先使用 Docker Secret：
+
+```text
+BOT_TOKEN_FILE
+TELEGRAM_WEBHOOK_SECRET_FILE
+INITIAL_ADMIN_PASSWORD_FILE
+```
+
+应用配置加载器同时支持：
+
+* 普通环境变量。
+* 对应的 `_FILE` 文件变量。
+
+任何 Secret 都不得提交到 Git。
+
+## 16.4 反向代理要求
+
+Nginx 应：
+
+* 强制 HTTPS。
+* 限制 Webhook 请求体。
+* 设置安全响应头。
+* 不记录 Webhook Secret。
+* 不缓存管理 API。
+* 仅将真实客户端 IP 从可信代理传入。
+* 管理后台可选配置额外 IP 白名单。
+
+---
+
+# 十七、GitHub Actions 与依赖安全
+
+新增工作流：
+
+```text
+.github/workflows/ci.yml
+.github/workflows/docker.yml
+```
+
+CI 顺序：
+
+```bash
+dotnet restore --locked-mode
+dotnet build --no-restore -c Release
+dotnet test --no-build -c Release
+dotnet format --verify-no-changes
+docker build
+```
+
+增加：
+
+* Dependabot。
+* CodeQL。
+* Secret scanning。
+* NuGet 漏洞检查。
+* Docker 镜像漏洞扫描。
+* 禁止测试失败时发布镜像。
+* 镜像使用 commit SHA 标签。
+* `latest` 仅在主分支成功后更新。
+
+发布标签示例：
+
+```text
+ghcr.io/geniusjunmin/telegram-chain-bot:<commit-sha>
+ghcr.io/geniusjunmin/telegram-chain-bot:latest
+```
+
+---
+
+# 十八、自动化测试计划
+
+## 18.1 单元测试
+
+必须覆盖：
+
+1. 旧 SHA-256 密码验证。
+2. 登录后自动升级密码哈希。
+3. 错误密码不能升级哈希。
+4. 最后一个 SuperAdmin 不可停用。
+5. 管理员角色权限矩阵。
+6. Telegram initData 正确签名。
+7. 错误签名拒绝。
+8. 过期 auth_date 拒绝。
+9. 请求体伪造 UserId 无效。
+10. Webhook Secret 验证。
+11. 标题和昵称 HTML 编码。
+12. 控制字符过滤。
+13. 接龙已满、关闭、过期时拒绝加入。
+14. 群管理员创建权限。
+15. 白名单 Disabled、Audit、Enforced 三种模式。
+16. 重复 Telegram Update 幂等处理。
+17. Telegram 消息 Formatter 长度控制。
+
+## 18.2 集成测试
+
+使用 `WebApplicationFactory` 和临时 SQLite 数据库。
+
+覆盖：
+
+1. 新数据库 Migration。
+2. 旧数据库 Legacy Baseline 升级。
+3. 迁移失败时保留原数据库和备份。
+4. Cookie 登录。
+5. CSRF 验证。
+6. 401 与 403 区分。
+7. 登录限流。
+8. 账号锁定和解锁。
+9. SecurityStamp 会话撤销。
+10. ReadOnly 不能调用写接口。
+11. Admin 不能管理管理员。
+12. SuperAdmin 完整权限。
+13. API 不泄露 ChatId、MessageId、Telegram User ID。
+14. 分页和过滤。
+15. 并发版本冲突返回 409。
+16. 软删除和恢复。
+17. 审计日志生成。
+
+## 18.3 Bot 测试
+
+使用模拟 `ITelegramBotClient`：
+
+1. 未授权群聊。
+2. Pending 群聊。
+3. Approved 群聊。
+4. 普通成员在 AdminOnly 群创建。
+5. Telegram 权限查询失败。
+6. Bot Owner 私聊命令。
+7. Owner 命令在群内执行。
+8. 重复 Callback。
+9. 两个用户并发加入。
+10. 同一用户重复加入。
+11. 用户退出。
+12. 接龙关闭。
+13. Telegram 消息编辑失败。
+14. Telegram 限流重试。
+
+## 18.4 前端测试
+
+使用 Playwright：
+
+1. 登录和退出。
+2. 强制修改密码。
+3. SuperAdmin、Admin、ReadOnly 页面差异。
+4. 401 会话过期。
+5. 403 权限不足。
+6. CSRF 失败。
+7. 手机布局。
+8. 接龙标题包含 HTML/Script Payload。
+9. 成员昵称包含引号和换行。
+10. 删除确认。
+11. 加载、空数据和错误状态。
+
+## 18.5 备份恢复测试
+
+1. 创建带数据数据库。
+2. 执行备份。
+3. 修改数据库。
+4. 从备份恢复。
+5. 验证接龙、成员、管理员和设置完整。
+6. 验证恢复后 Migration 可正常执行。
+
+---
+
+# 十九、分阶段执行顺序
+
+## Phase 0：基线和保护
+
+提交内容：
+
+* 创建升级分支。
+* 增加测试项目。
+* 保存一份当前旧数据库测试 Fixture。
+* 增加 `.env.example`。
+* 增加 `.gitignore`。
+* 记录现有 API 行为。
+* 构建和测试当前版本。
+* 创建手工数据库备份。
+
+提交信息：
+
+```text
+test: add legacy database fixture and upgrade baseline
+```
+
+## Phase 1：P0 安全修复
+
+完成：
+
+* Telegram initData 返回验证后用户。
+* 校验 auth_date。
+* Join API 不再接收 UserId。
+* Chain PublicId。
+* 固定 Webhook 路径和 Secret Header。
+* Telegram Update 幂等。
+* Telegram HTML Encode。
+* 后台 DOM XSS 修复。
+
+提交信息：
+
+```text
+security: harden telegram identity webhook and output encoding
+```
+
+## Phase 2：正式数据库迁移
+
+完成：
+
+* EF Core Migration。
+* Legacy Baseline。
+* 自动备份。
+* 新实体和索引。
+* 停止 EnsureCreated。
+* 删除手工 ALTER TABLE。
+* SQLite WAL、Foreign Key、Busy Timeout。
+
+提交信息：
+
+```text
+database: adopt ef migrations and production schema
+```
+
+## Phase 3：管理员认证与 RBAC
+
+完成：
+
+* PasswordHasher。
+* 旧哈希自动升级。
+* Cookie Authentication。
+* Data Protection 持久化。
+* CSRF。
+* 登录限流和锁定。
+* 多管理员。
+* Authorization Policies。
+* SecurityStamp 会话撤销。
+* 安全初始化首个管理员。
+
+提交信息：
+
+```text
+auth: add secure admin accounts cookies and role policies
+```
+
+## Phase 4：接龙与群权限功能
+
+完成：
+
+* ManagedChat。
+* 白名单三模式。
+* 群管理员权限。
+* BOT_OWNER_IDS。
+* 接龙关闭、过期、容量。
+* 成员退出。
+* 并发消息同步。
+* Telegram 重试和失败状态。
+
+提交信息：
+
+```text
+feat: add managed chats chain lifecycle and bot permissions
+```
+
+## Phase 5：管理 API 与审计
+
+完成：
+
+* 分页和筛选。
+* Dashboard。
+* 管理员管理。
+* 群管理。
+* 设置管理。
+* 审计日志。
+* 软删除、恢复、Resync。
+* Problem Details。
+
+提交信息：
+
+```text
+feat: expand admin api audit and management workflows
+```
+
+## Phase 6：后台 UI 重构
+
+完成：
+
+* ES Module 拆分。
+* Dashboard。
+* 接龙、群聊、管理员、设置、审计页面。
+* 响应式布局。
+* 安全 DOM 渲染。
+* CSRF 和 Cookie 会话。
+* 无障碍和减少动画支持。
+
+提交信息：
+
+```text
+ui: rebuild secure responsive admin console
+```
+
+## Phase 7：生产部署能力
+
+完成：
+
+* .NET 10。
+* 非 root Docker。
+* Healthcheck。
+* 自动备份。
+* 结构化日志。
+* GitHub Actions。
+* Dependabot、CodeQL、镜像扫描。
+* 部署和恢复文档。
+
+提交信息：
+
+```text
+ops: harden container ci health checks and backups
+```
+
+---
+
+# 二十、环境变量清单
+
+```env
+# Telegram
+BOT_TOKEN=
+WEBHOOK_BASE_URL=https://example.com
+WEBHOOK_PATH=/telegram/webhook
+TELEGRAM_WEBHOOK_SECRET=
+BOT_OWNER_IDS=
+
+# Database
+SQLITE_PATH=/app/data/chain.db
+BACKUP_PATH=/app/backups
+
+# Admin bootstrap
+INITIAL_ADMIN_USERNAME=
+INITIAL_ADMIN_PASSWORD_FILE=/run/secrets/admin_password
+
+# Security
+ADMIN_COOKIE_HOURS=8
+ADMIN_LOGIN_MAX_ATTEMPTS=5
+ADMIN_LOCKOUT_MINUTES=15
+TELEGRAM_INIT_DATA_MAX_AGE_SECONDS=300
+REQUIRE_MFA_FOR_SUPERADMIN=true
+
+# Runtime
+ASPNETCORE_ENVIRONMENT=Production
+ASPNETCORE_URLS=http://+:8080
+```
+
+同时支持：
+
+```text
+BOT_TOKEN_FILE
+TELEGRAM_WEBHOOK_SECRET_FILE
+```
+
+启动时使用 Options Validation：
+
+* Bot Token 必填。
+* Webhook Base URL 在 Production 必须为 HTTPS。
+* Webhook Secret 至少 32 字节。
+* SQLite 目录必须可写。
+* BOT_OWNER_IDS 必须全部为合法 long。
+* 初始化密码文件存在时必须可读取。
+
+任何关键配置不合法时直接阻止生产环境启动。
+
+---
+
+# 二十一、验收标准
+
+项目只有同时满足以下条件才算升级完成：
+
+1. 旧数据库能无数据丢失升级。
+2. 迁移前自动生成有效备份。
+3. 不再存在 `EnsureCreatedAsync`。
+4. 不再存在启动时手写 `ALTER TABLE`。
+5. 不再生成无盐 SHA-256 密码。
+6. 旧管理员首次成功登录后自动升级哈希。
+7. 不再存在默认 `admin/admin123` 初始化逻辑。
+8. 管理 Cookie 为 Secure、HttpOnly、SameSite。
+9. 管理认证信息不进入 localStorage。
+10. 所有写接口都有 CSRF 验证。
+11. 登录接口有限流和锁定。
+12. ReadOnly 通过直接调用 API 也无法写入。
+13. 最后一个 SuperAdmin 无法被停用或降级。
+14. Telegram WebApp 无法伪造 UserId。
+15. 过期 initData 被拒绝。
+16. Bot Token 不再出现在 Webhook URL。
+17. 重复 Update 不会重复执行。
+18. 后台无法通过接龙标题或成员名注入脚本。
+19. Telegram HTML 特殊字符不会破坏消息。
+20. 未授权群聊在 Enforced 模式无法创建接龙。
+21. 多人并发加入不会产生重复成员。
+22. 多人并发加入不会把 Telegram 名单覆盖成旧版本。
+23. API 不公开 ChatId、MessageId 和 Telegram User ID。
+24. 接龙支持关闭、过期、人数限制和退出。
+25. 后台列表全部支持分页。
+26. 删除接龙默认是软删除。
+27. 管理操作均生成审计日志。
+28. `/health/live` 和 `/health/ready` 工作正常。
+29. Docker 使用非 root 用户。
+30. 自动化测试和 Docker 构建全部通过。
+
+---
+
+# 二十二、最终构建与发布验证
+
+依次执行：
+
+```bash
+dotnet restore --locked-mode
+dotnet build src/TelegramChainBot.csproj -c Release --no-restore
+dotnet test -c Release --no-build
+dotnet format --verify-no-changes
+docker build -f docker/Dockerfile -t telegram-chain-bot:test .
+docker compose -f docker/docker-compose.yml config
+docker compose -f docker/docker-compose.yml up -d
+```
+
+验证：
+
+```bash
+curl -f http://127.0.0.1:8080/health/live
+curl -f http://127.0.0.1:8080/health/ready
+docker logs telegram-chain-bot
+```
+
+升级生产数据库前：
+
+1. 停止旧容器。
+2. 手工再备份一次数据库和 WAL 文件。
+3. 使用测试副本先执行升级。
+4. 验证管理员登录、旧接龙和旧成员。
+5. 再升级生产数据库。
+6. 保留上一版本镜像和升级前数据库备份。
+7. 出现 Migration 或数据验证错误时立即回滚，不得继续带错运行。
+
+---
+
+# 二十三、明确的方案结论
+
+1. 不采用自定义无状态 HMAC 管理 Token。
+2. 采用 ASP.NET Core Cookie Authentication。
+3. 不单独保存 PasswordSalt。
+4. 采用 ASP.NET Core PasswordHasher 的版本化哈希格式。
+5. 不使用简单白名单开关，采用 Disabled、Audit、Enforced 三模式。
+6. 新安装默认 Enforced，旧系统升级默认 Audit。
+7. Bot Owner 使用 `BOT_OWNER_IDS`，允许配置多个 Owner。
+8. Owner 管理指令只允许私聊。
+9. 不再自动创建弱默认管理员。
+10. 不再把 Telegram Bot Token 放在 Webhook URL。
+11. 本轮直接升级到 .NET 10 LTS。
+12. 保留 SQLite，但明确限制为单实例部署。

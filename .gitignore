@@ -1,0 +1,35 @@
+# Build folders
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+
+# Databases
+*.db
+*.db-wal
+*.db-shm
+data/chain.db
+data/backups/
+/app/data/
+/app/backups/
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+.vs/
+.idea/
+.vscode/
+
+# Secrets and environment configurations
+.env
+.env.local
+.env.development
+.env.production
+admin_password
+/app/data/dataprotection-keys/
+
+# Test output
+TestResults/
