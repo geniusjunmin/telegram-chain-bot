@@ -111,6 +111,7 @@ public sealed class AdminService(
         admin.PasswordHash = passwordHasher.HashPassword(admin, newPassword);
         admin.SecurityStamp = Guid.NewGuid().ToString("N");
         admin.PasswordChangedAt = DateTimeOffset.UtcNow;
+        admin.MustChangePassword = false;
         admin.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
         return true;
@@ -118,23 +119,68 @@ public sealed class AdminService(
 
     public async Task EnsureDefaultAdminAsync(CancellationToken ct)
     {
-        if (!await db.AdminAccounts.AnyAsync(ct))
+        if (await db.AdminAccounts.AnyAsync(ct))
         {
-            var defaultAdmin = new AdminAccount
-            {
-                Username = "admin",
-                NormalizedUsername = "ADMIN",
-                Role = AdminRole.RootAdmin,
-                IsActive = true,
-                SecurityStamp = Guid.NewGuid().ToString("N"),
-                CreatedAt = DateTimeOffset.UtcNow,
-                UpdatedAt = DateTimeOffset.UtcNow
-            };
-            defaultAdmin.PasswordHash = passwordHasher.HashPassword(defaultAdmin, "admin123");
-            
-            db.AdminAccounts.Add(defaultAdmin);
-            await db.SaveChangesAsync(ct);
+            return;
         }
+
+        string? password = null;
+        var passwordFile = Environment.GetEnvironmentVariable("INITIAL_ADMIN_PASSWORD_FILE");
+        if (string.IsNullOrWhiteSpace(passwordFile))
+        {
+            passwordFile = "data/initial_admin_password";
+        }
+
+        if (File.Exists(passwordFile))
+        {
+            password = (await File.ReadAllTextAsync(passwordFile, ct)).Trim();
+        }
+        else
+        {
+            var envName = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production";
+            if (string.Equals(envName, "Development", StringComparison.OrdinalIgnoreCase))
+            {
+                password = Environment.GetEnvironmentVariable("INITIAL_ADMIN_PASSWORD")?.Trim();
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(password))
+        {
+            throw new InvalidOperationException("No initial admin password was configured. Root account bootstrapping failed.");
+        }
+
+        if (password.Length < 12)
+        {
+            throw new InvalidOperationException("Bootstrap password is too short. It must be at least 12 characters.");
+        }
+
+        if (IsWeakPassword(password))
+        {
+            throw new InvalidOperationException("Bootstrap password is too simple.");
+        }
+
+        var defaultAdmin = new AdminAccount
+        {
+            Username = "admin",
+            NormalizedUsername = "ADMIN",
+            Role = AdminRole.RootAdmin,
+            IsActive = true,
+            MustChangePassword = true,
+            SecurityStamp = Guid.NewGuid().ToString("N"),
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        defaultAdmin.PasswordHash = passwordHasher.HashPassword(defaultAdmin, password);
+        
+        db.AdminAccounts.Add(defaultAdmin);
+        await db.SaveChangesAsync(ct);
+    }
+
+    private static bool IsWeakPassword(string password)
+    {
+        if (password.All(char.IsDigit) || password.All(char.IsLetter)) return true;
+        if (password.Distinct().Count() < 4) return true;
+        return false;
     }
 
     private static bool IsLegacySha256Hash(string hash)

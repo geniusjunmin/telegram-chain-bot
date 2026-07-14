@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.DataProtection;
+using System.IO;
 using System.Text.Json;
 using Telegram.Bot;
 using Telegram.Bot.Types;
@@ -36,13 +38,19 @@ builder.Services.AddDbContext<AppDbContext>(opts =>
 
 builder.Services.AddSingleton<IPasswordHasher<AdminAccount>, PasswordHasher<AdminAccount>>();
 
+var dataPath = builder.Configuration["DATA_PATH"] ?? "data";
+var keysFolder = Path.Combine(dataPath, "dataprotection-keys");
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(keysFolder))
+    .SetApplicationName("TelegramChainBot");
+
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
         options.Cookie.HttpOnly = true;
         options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
         options.Cookie.SameSite = SameSiteMode.Strict;
-        options.Cookie.Name = "AdminSession";
+        options.Cookie.Name = "__Host-TelegramChain.Admin";
         options.ExpireTimeSpan = TimeSpan.FromMinutes(30);
         options.SlidingExpiration = true;
         options.Events = new CookieAuthenticationEvents
@@ -62,6 +70,26 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
                 var sessionService = context.HttpContext.RequestServices.GetRequiredService<AdminSessionService>();
                 var sessionId = context.Principal?.FindFirst("SessionId")?.Value;
                 if (!sessionService.IsSessionActive(sessionId))
+                {
+                    context.RejectPrincipal();
+                    await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+                    return;
+                }
+
+                var adminIdClaim = context.Principal?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+                if (int.TryParse(adminIdClaim, out var adminId))
+                {
+                    var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
+                    var admin = await db.AdminAccounts.FindAsync([adminId]);
+                    
+                    var securityStamp = context.Principal?.FindFirst("SecurityStamp")?.Value;
+                    if (admin == null || !admin.IsActive || admin.SecurityStamp != securityStamp)
+                    {
+                        context.RejectPrincipal();
+                        await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+                    }
+                }
+                else
                 {
                     context.RejectPrincipal();
                     await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);

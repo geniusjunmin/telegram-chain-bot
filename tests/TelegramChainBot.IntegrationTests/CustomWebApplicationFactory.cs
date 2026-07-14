@@ -26,6 +26,10 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             });
         });
 
+        Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Development");
+        Environment.SetEnvironmentVariable("INITIAL_ADMIN_PASSWORD", "SuperSecurePassword123!");
+        Environment.SetEnvironmentVariable("INITIAL_ADMIN_PASSWORD_FILE", null);
+
         builder.ConfigureServices(services =>
         {
             // 1. Remove existing AppDbContext registration

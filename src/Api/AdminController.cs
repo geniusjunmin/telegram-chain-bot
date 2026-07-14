@@ -21,7 +21,8 @@ public static class AdminController
 {
     public static IEndpointRouteBuilder MapAdminEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/admin");
+        var group = app.MapGroup("/api/admin")
+            .AddEndpointFilter(MustChangePasswordFilter);
 
         group.MapGet("/csrf", GetCsrfToken).AllowAnonymous();
         group.MapPost("/login", LoginAsync).AllowAnonymous().RequireRateLimiting("login-limiter");
@@ -95,7 +96,8 @@ public static class AdminController
             new Claim(ClaimTypes.Name, admin.Username),
             new Claim(ClaimTypes.NameIdentifier, admin.Id.ToString()),
             new Claim(ClaimTypes.Role, admin.Role.ToString()),
-            new Claim("SessionId", sessionId)
+            new Claim("SessionId", sessionId),
+            new Claim("SecurityStamp", admin.SecurityStamp)
         };
 
         var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
@@ -449,6 +451,33 @@ public static class AdminController
             page = pageNum,
             pageSize = size
         });
+    }
+
+    private static async ValueTask<object?> MustChangePasswordFilter(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
+    {
+        var httpContext = context.HttpContext;
+        var user = httpContext.User;
+
+        if (user.Identity?.IsAuthenticated == true)
+        {
+            var adminIdClaim = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (int.TryParse(adminIdClaim, out var adminId))
+            {
+                var db = httpContext.RequestServices.GetRequiredService<AppDbContext>();
+                var admin = await db.AdminAccounts.FindAsync([adminId], httpContext.RequestAborted);
+                if (admin != null && admin.MustChangePassword)
+                {
+                    var path = httpContext.Request.Path.Value ?? "";
+                    if (!path.EndsWith("/change-password", StringComparison.OrdinalIgnoreCase) && 
+                        !path.EndsWith("/logout", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return Results.Json(new { error = "You must change your password before performing this action." }, statusCode: StatusCodes.Status403Forbidden);
+                    }
+                }
+            }
+        }
+
+        return await next(context);
     }
 
     public record LoginRequest(string Username, string Password);
