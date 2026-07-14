@@ -59,7 +59,8 @@ public class UpdateHandlerTests : IDisposable
         _configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["BOT_OWNER_IDS"] = "99999"
+                ["BOT_OWNER_IDS"] = "99999",
+                ["GLOBAL_WHITELIST_MODE"] = "Enforced"
             })
             .Build();
     }
@@ -107,7 +108,7 @@ public class UpdateHandlerTests : IDisposable
     }
 
     [Fact]
-    public async Task HandleAsync_LeavesChat_WhenGroupIsDisabledInWhitelist()
+    public async Task HandleAsync_LeavesChat_WhenGroupIsBlockedInWhitelist()
     {
         // Arrange
         var handler = new UpdateHandler(
@@ -117,6 +118,18 @@ public class UpdateHandlerTests : IDisposable
             _adminValidator,
             _configuration,
             NullLogger<UpdateHandler>.Instance);
+
+        // Pre-register group as Blocked
+        _db.ManagedChats.Add(new ManagedChat
+        {
+            ChatId = -100123456,
+            Title = "Blocked Group",
+            ChatType = "supergroup",
+            AuthorizationStatus = AuthorizationStatus.Blocked,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+        await _db.SaveChangesAsync();
 
         var mockMsg = CreateMockMessage(-100123456L, ChatType.Supergroup, "/start_chain Pizza Dinner", 11111, "alice", "Alice");
         var update = new Update
@@ -133,11 +146,11 @@ public class UpdateHandlerTests : IDisposable
         
         var managed = await _db.ManagedChats.FindAsync(-100123456L);
         Assert.NotNull(managed);
-        Assert.Equal(ManagedChatStatus.Disabled, managed.Status);
+        Assert.Equal(AuthorizationStatus.Blocked, managed.AuthorizationStatus);
     }
 
     [Fact]
-    public async Task HandleAsync_DoesNotRespond_WhenGroupIsInAuditMode()
+    public async Task HandleAsync_DoesNotRespond_WhenGroupIsPendingInWhitelist()
     {
         // Arrange
         var handler = new UpdateHandler(
@@ -148,14 +161,15 @@ public class UpdateHandlerTests : IDisposable
             _configuration,
             NullLogger<UpdateHandler>.Instance);
 
-        // Pre-register group as Audit
+        // Pre-register group as Pending
         _db.ManagedChats.Add(new ManagedChat
         {
             ChatId = -100123456,
-            Title = "Audit Group",
-            Status = ManagedChatStatus.Audit,
+            Title = "Pending Group",
+            ChatType = "supergroup",
+            AuthorizationStatus = AuthorizationStatus.Pending,
             CreatedAt = DateTimeOffset.UtcNow,
-            AuthorizedBy = "Owner"
+            UpdatedAt = DateTimeOffset.UtcNow
         });
         await _db.SaveChangesAsync();
 
@@ -186,7 +200,7 @@ public class UpdateHandlerTests : IDisposable
             _configuration,
             NullLogger<UpdateHandler>.Instance);
 
-        var mockMsg = CreateMockMessage(99999, ChatType.Private, "/whitelist_add -100888888 Enforced", 99999, "owner_username", "Owner");
+        var mockMsg = CreateMockMessage(99999, ChatType.Private, "/whitelist_add -100888888 Approved", 99999, "owner_username", "Owner");
         var update = new Update
         {
             Id = 1,
@@ -199,8 +213,7 @@ public class UpdateHandlerTests : IDisposable
         // Assert
         var managed = await _db.ManagedChats.FindAsync(-100888888L);
         Assert.NotNull(managed);
-        Assert.Equal(ManagedChatStatus.Enforced, managed.Status);
-        Assert.Equal("owner_username", managed.AuthorizedBy);
+        Assert.Equal(AuthorizationStatus.Approved, managed.AuthorizationStatus);
 
         await _telegramServiceMock.Received(1).SendTextMessageAsync(
             99999, 
@@ -220,7 +233,7 @@ public class UpdateHandlerTests : IDisposable
             _configuration,
             NullLogger<UpdateHandler>.Instance);
 
-        var mockMsg = CreateMockMessage(11111, ChatType.Private, "/whitelist_add -100888888 Enforced", 11111, "alice", "Alice");
+        var mockMsg = CreateMockMessage(11111, ChatType.Private, "/whitelist_add -100888888 Approved", 11111, "alice", "Alice");
         var update = new Update
         {
             Id = 1,

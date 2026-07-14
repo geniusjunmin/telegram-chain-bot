@@ -46,48 +46,78 @@ public sealed class UpdateHandler(
         var text = message.Text!.Trim();
         logger.LogInformation("Processing message: {Text}", text);
 
-        // 1. Whitelist checking for group chats
         var chatType = message.Chat.Type;
         if (chatType == ChatType.Group || chatType == ChatType.Supergroup)
         {
-            var managed = await db.ManagedChats.FindAsync([message.Chat.Id], cancellationToken);
-            if (managed == null)
+            var modeStr = configuration["GLOBAL_WHITELIST_MODE"] ?? "Enforced";
+            if (!Enum.TryParse<WhitelistMode>(modeStr, true, out var mode))
             {
-                // Auto-register as Disabled
-                managed = new ManagedChat
-                {
-                    ChatId = message.Chat.Id,
-                    Title = message.Chat.Title ?? "Unknown Group",
-                    Status = ManagedChatStatus.Disabled,
-                    CreatedAt = DateTimeOffset.UtcNow,
-                    AuthorizedBy = "System"
-                };
-                db.ManagedChats.Add(managed);
-                await db.SaveChangesAsync(cancellationToken);
+                mode = WhitelistMode.Enforced;
             }
 
-            if (managed.Status == ManagedChatStatus.Disabled)
+            if (mode != WhitelistMode.Disabled)
             {
-                logger.LogWarning("Group {ChatId} ({Title}) is Disabled in Whitelist. Leaving chat.", message.Chat.Id, managed.Title);
-                try
+                var managed = await db.ManagedChats.FindAsync([message.Chat.Id], cancellationToken);
+                
+                if (mode == WhitelistMode.Audit)
                 {
-                    await telegramService.LeaveChatAsync(message.Chat.Id, cancellationToken);
+                    if (managed == null)
+                    {
+                        managed = new ManagedChat
+                        {
+                            ChatId = message.Chat.Id,
+                            Title = message.Chat.Title ?? "Unknown Group",
+                            ChatType = chatType == ChatType.Supergroup ? "supergroup" : "group",
+                            AuthorizationStatus = AuthorizationStatus.Pending,
+                            CreatedAt = DateTimeOffset.UtcNow,
+                            UpdatedAt = DateTimeOffset.UtcNow
+                        };
+                        db.ManagedChats.Add(managed);
+                        await db.SaveChangesAsync(cancellationToken);
+                        
+                        logger.LogInformation("Group {ChatId} ({Title}) registered as Pending under Audit mode.", message.Chat.Id, managed.Title);
+                    }
                 }
-                catch (Exception ex)
+                else if (mode == WhitelistMode.Enforced)
                 {
-                    logger.LogError(ex, "Failed to leave chat {ChatId}.", message.Chat.Id);
-                }
-                return;
-            }
+                    if (managed == null || managed.AuthorizationStatus == AuthorizationStatus.Pending)
+                    {
+                        if (managed == null)
+                        {
+                            managed = new ManagedChat
+                            {
+                                ChatId = message.Chat.Id,
+                                Title = message.Chat.Title ?? "Unknown Group",
+                                ChatType = chatType == ChatType.Supergroup ? "supergroup" : "group",
+                                AuthorizationStatus = AuthorizationStatus.Pending,
+                                CreatedAt = DateTimeOffset.UtcNow,
+                                UpdatedAt = DateTimeOffset.UtcNow
+                            };
+                            db.ManagedChats.Add(managed);
+                            await db.SaveChangesAsync(cancellationToken);
+                        }
+                        
+                        await telegramService.SendTextMessageAsync(message.Chat.Id, "该群聊尚未获得授权，请联系管理员。", cancellationToken);
+                        return;
+                    }
 
-            if (managed.Status == ManagedChatStatus.Audit)
-            {
-                logger.LogInformation("Group {ChatId} ({Title}) is in Audit mode. Logging message but ignoring commands.", message.Chat.Id, managed.Title);
-                return;
+                    if (managed.AuthorizationStatus == AuthorizationStatus.Blocked)
+                    {
+                        logger.LogWarning("Group {ChatId} is Blocked. Leaving group.", message.Chat.Id);
+                        try
+                        {
+                            await telegramService.LeaveChatAsync(message.Chat.Id, cancellationToken);
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogError(ex, "Failed to leave blocked group {ChatId}.", message.Chat.Id);
+                        }
+                        return;
+                    }
+                }
             }
         }
 
-        // 2. Parse Owner commands (Private chat only)
         if (text.StartsWith("/whitelist_add", StringComparison.OrdinalIgnoreCase))
         {
             await HandleWhitelistAddAsync(message, text, cancellationToken);
@@ -104,14 +134,12 @@ public sealed class UpdateHandler(
             return;
         }
 
-        // 3. Parse Group Admin commands
         if (text.StartsWith("/delete_chain", StringComparison.OrdinalIgnoreCase))
         {
             await DeleteChainFromGroupAsync(message, text, cancellationToken);
             return;
         }
 
-        // 4. Standard bot commands
         if (TryParseStartChainCommand(message, out var title))
         {
             await CreateChainAsync(message, title, cancellationToken);
@@ -142,9 +170,9 @@ public sealed class UpdateHandler(
         }
 
         var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length < 3)
+        if (parts.Length < 2)
         {
-            await telegramService.SendTextMessageAsync(message.Chat.Id, "格式错误。用法：/whitelist_add <chatId> <status>", cancellationToken);
+            await telegramService.SendTextMessageAsync(message.Chat.Id, "格式错误。用法：/whitelist_add <chatId> [status]", cancellationToken);
             return;
         }
 
@@ -154,11 +182,10 @@ public sealed class UpdateHandler(
             return;
         }
 
-        var statusStr = parts[2];
-        if (!Enum.TryParse<ManagedChatStatus>(statusStr, true, out var status))
+        var status = AuthorizationStatus.Approved;
+        if (parts.Length >= 3 && Enum.TryParse<AuthorizationStatus>(parts[2], true, out var parsedStatus))
         {
-            await telegramService.SendTextMessageAsync(message.Chat.Id, "无效的 status。可用状态：Disabled, Audit, Enforced", cancellationToken);
-            return;
+            status = parsedStatus;
         }
 
         var managed = await db.ManagedChats.FindAsync([targetChatId], cancellationToken);
@@ -168,16 +195,26 @@ public sealed class UpdateHandler(
             {
                 ChatId = targetChatId,
                 Title = $"Group {targetChatId}",
-                Status = status,
+                ChatType = "supergroup",
+                AuthorizationStatus = status,
                 CreatedAt = DateTimeOffset.UtcNow,
-                AuthorizedBy = message.From.Username ?? message.From.Id.ToString()
+                UpdatedAt = DateTimeOffset.UtcNow
             };
             db.ManagedChats.Add(managed);
         }
         else
         {
-            managed.Status = status;
-            managed.AuthorizedBy = message.From.Username ?? message.From.Id.ToString();
+            managed.AuthorizationStatus = status;
+            managed.UpdatedAt = DateTimeOffset.UtcNow;
+        }
+
+        if (status == AuthorizationStatus.Approved)
+        {
+            managed.ApprovedAt = DateTimeOffset.UtcNow;
+        }
+        else if (status == AuthorizationStatus.Blocked)
+        {
+            managed.BlockedAt = DateTimeOffset.UtcNow;
         }
 
         await db.SaveChangesAsync(cancellationToken);
@@ -211,9 +248,11 @@ public sealed class UpdateHandler(
             return;
         }
 
-        db.ManagedChats.Remove(managed);
+        managed.AuthorizationStatus = AuthorizationStatus.Blocked;
+        managed.BlockedAt = DateTimeOffset.UtcNow;
+        managed.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
-        await telegramService.SendTextMessageAsync(message.Chat.Id, $"成功从白名单移除群组 {targetChatId}。", cancellationToken);
+        await telegramService.SendTextMessageAsync(message.Chat.Id, $"成功将群组 {targetChatId} 标记为 Blocked。", cancellationToken);
     }
 
     private async Task HandleWhitelistListAsync(Message message, string text, CancellationToken cancellationToken)
@@ -230,12 +269,15 @@ public sealed class UpdateHandler(
             page = Math.Max(1, parsedPage);
         }
 
-        const int pageSize = 10;
         var total = await db.ManagedChats.CountAsync(cancellationToken);
+        var pageSize = 10;
         var totalPages = (int)Math.Ceiling((double)total / pageSize);
+        if (totalPages == 0) totalPages = 1;
+
+        page = Math.Min(page, totalPages);
 
         var list = await db.ManagedChats
-            .OrderBy(c => c.CreatedAt)
+            .OrderBy(c => c.ChatId)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync(cancellationToken);
@@ -250,7 +292,7 @@ public sealed class UpdateHandler(
         sb.AppendLine($"--- 白名单群组列表 (第 {page}/{totalPages} 页，总数 {total}) ---");
         foreach (var chat in list)
         {
-            sb.AppendLine($"ID: `{chat.ChatId}` | 标题: {chat.Title} | 状态: {chat.Status} | 授权人: {chat.AuthorizedBy}");
+            sb.AppendLine($"ID: `{chat.ChatId}` | 标题: {chat.Title} | 状态: {chat.AuthorizationStatus} | 类型: {chat.ChatType}");
         }
         sb.AppendLine();
         sb.AppendLine("使用 `/whitelist_list <页码>` 查看其他页。");
@@ -458,14 +500,13 @@ public sealed class UpdateHandler(
 
             var publicId = callback.Data.Split(':', 2)[1];
 
-            // Whitelist check for CallbackQuery
             if (callback.Message != null)
             {
                 var chatType = callback.Message.Chat.Type;
                 if (chatType == ChatType.Group || chatType == ChatType.Supergroup)
                 {
                     var managed = await db.ManagedChats.FindAsync([callback.Message.Chat.Id], cancellationToken);
-                    if (managed == null || managed.Status != ManagedChatStatus.Enforced)
+                    if (managed == null || managed.AuthorizationStatus != AuthorizationStatus.Approved)
                     {
                         await telegramService.AnswerCallbackAsync(callback.Id, "群聊未授权使用此 Bot", cancellationToken);
                         return;
@@ -487,14 +528,19 @@ public sealed class UpdateHandler(
                 telegramNickname = user.Username ?? $"user_{user.Id}";
             }
 
-            var (added, members) = await chainService.JoinAsync(chain.Id, user.Id, telegramNickname, telegramNickname, cancellationToken);
+            var (added, members, error) = await chainService.JoinAsync(chain.Id, user.Id, telegramNickname, telegramNickname, cancellationToken);
+            if (error != null)
+            {
+                await telegramService.AnswerCallbackAsync(callback.Id, error, cancellationToken);
+                return;
+            }
             
             await telegramService.AnswerCallbackAsync(callback.Id, added ? "加入成功" : "你已经参加过了", cancellationToken);
 
             if (added)
             {
                 var messageText = ChainService.FormatChainMessage(chain.Title, members);
-                await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId, chain.PublicId, messageText, cancellationToken);
+                await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId.GetValueOrDefault(), chain.PublicId, messageText, cancellationToken);
             }
         }
         catch (Exception)

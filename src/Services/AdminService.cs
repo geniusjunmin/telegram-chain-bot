@@ -15,7 +15,7 @@ public sealed class AdminService(
     public async Task<AdminAccount?> LoginAsync(string username, string password, CancellationToken ct)
     {
         var admin = await db.AdminAccounts.FirstOrDefaultAsync(a => a.Username == username, ct);
-        if (admin == null || admin.IsDisabled)
+        if (admin == null || !admin.IsActive)
         {
             return null;
         }
@@ -38,6 +38,8 @@ public sealed class AdminService(
                 admin.PasswordHash = passwordHasher.HashPassword(admin, password);
                 admin.AccessFailedCount = 0;
                 admin.LockoutEnd = null;
+                admin.LastLoginAt = DateTimeOffset.UtcNow;
+                admin.UpdatedAt = DateTimeOffset.UtcNow;
                 await db.SaveChangesAsync(ct);
             }
         }
@@ -49,6 +51,8 @@ public sealed class AdminService(
                 isValid = true;
                 admin.AccessFailedCount = 0;
                 admin.LockoutEnd = null;
+                admin.LastLoginAt = DateTimeOffset.UtcNow;
+                admin.UpdatedAt = DateTimeOffset.UtcNow;
                 await db.SaveChangesAsync(ct);
             }
             else if (result == PasswordVerificationResult.SuccessRehashNeeded)
@@ -57,6 +61,8 @@ public sealed class AdminService(
                 admin.PasswordHash = passwordHasher.HashPassword(admin, password);
                 admin.AccessFailedCount = 0;
                 admin.LockoutEnd = null;
+                admin.LastLoginAt = DateTimeOffset.UtcNow;
+                admin.UpdatedAt = DateTimeOffset.UtcNow;
                 await db.SaveChangesAsync(ct);
             }
         }
@@ -68,6 +74,7 @@ public sealed class AdminService(
             {
                 admin.LockoutEnd = DateTimeOffset.UtcNow.AddMinutes(15);
             }
+            admin.UpdatedAt = DateTimeOffset.UtcNow;
             await db.SaveChangesAsync(ct);
             return null;
         }
@@ -78,7 +85,7 @@ public sealed class AdminService(
     public async Task<bool> ChangePasswordAsync(int adminId, string oldPassword, string newPassword, CancellationToken ct)
     {
         var admin = await db.AdminAccounts.FindAsync([adminId], ct);
-        if (admin == null || admin.IsDisabled)
+        if (admin == null || !admin.IsActive)
         {
             return false;
         }
@@ -102,6 +109,9 @@ public sealed class AdminService(
         }
 
         admin.PasswordHash = passwordHasher.HashPassword(admin, newPassword);
+        admin.SecurityStamp = Guid.NewGuid().ToString("N");
+        admin.PasswordChangedAt = DateTimeOffset.UtcNow;
+        admin.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
         return true;
     }
@@ -113,7 +123,12 @@ public sealed class AdminService(
             var defaultAdmin = new AdminAccount
             {
                 Username = "admin",
-                Role = AdminRole.RootAdmin
+                NormalizedUsername = "ADMIN",
+                Role = AdminRole.RootAdmin,
+                IsActive = true,
+                SecurityStamp = Guid.NewGuid().ToString("N"),
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
             };
             defaultAdmin.PasswordHash = passwordHasher.HashPassword(defaultAdmin, "admin123");
             

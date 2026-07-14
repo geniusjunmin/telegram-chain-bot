@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Text;
 using TelegramChainBot.Database.Models;
@@ -10,7 +12,6 @@ public static class TelegramMessageFormatter
     {
         var sb = new StringBuilder();
         
-        // HTML Encode the title to prevent markup injection
         var encodedTitle = WebUtility.HtmlEncode(title);
         sb.AppendLine(encodedTitle);
         sb.AppendLine();
@@ -33,12 +34,12 @@ public static class TelegramMessageFormatter
 
     private static string FormatMemberDisplayName(ChainMember member)
     {
-        if (string.IsNullOrWhiteSpace(member.TelegramNickname) ||
-            string.Equals(member.Username, member.TelegramNickname, StringComparison.Ordinal))
+        if (string.IsNullOrWhiteSpace(member.TelegramUsername) ||
+            string.Equals(member.DisplayName, member.TelegramUsername, StringComparison.Ordinal))
         {
-            return member.Username;
+            return member.DisplayName;
         }
 
-        return $"{member.Username}（{member.TelegramNickname}）";
+        return $"{member.DisplayName}（{member.TelegramUsername}）";
     }
 }

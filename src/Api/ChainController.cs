@@ -1,5 +1,16 @@
+using System;
+using System.Linq;
+using System.Net;
+using System.Net.Http.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using TelegramChainBot.Database;
+using TelegramChainBot.Database.Models;
 using TelegramChainBot.Security;
 using TelegramChainBot.Services;
 
@@ -24,15 +35,15 @@ public static class ChainController
         CancellationToken cancellationToken)
     {
         var chain = await chainService.GetChainByPublicIdAsync(publicId, cancellationToken);
-        if (chain is null)
+        if (chain is null || chain.Status == ChainStatus.Deleted)
         {
             return Results.NotFound(new { error = "chain not found" });
         }
 
         var members = await db.ChainMembers
-            .Where(m => m.ChainId == chain.Id)
-            .OrderBy(m => m.JoinTime)
-            .Select(m => new { displayName = m.Username })
+            .Where(m => m.ChainId == chain.Id && m.Status == ChainMemberStatus.Active)
+            .OrderBy(m => m.JoinedAt)
+            .Select(m => new { displayName = m.DisplayName })
             .ToListAsync(cancellationToken);
 
         var hasJoined = false;
@@ -43,7 +54,7 @@ public static class ChainController
             if (validatedUser != null)
             {
                 hasJoined = await db.ChainMembers.AnyAsync(
-                    m => m.ChainId == chain.Id && m.UserId == validatedUser.UserId, 
+                    m => m.ChainId == chain.Id && m.TelegramUserId == validatedUser.UserId && m.Status == ChainMemberStatus.Active, 
                     cancellationToken);
             }
         }
@@ -53,6 +64,9 @@ public static class ChainController
             publicId = chain.PublicId,
             title = chain.Title,
             createdAt = chain.CreatedAt,
+            status = chain.Status.ToString(),
+            maxMembers = chain.MaxMembers,
+            expiresAt = chain.ExpiresAt,
             hasJoined,
             members
         });
@@ -79,7 +93,7 @@ public static class ChainController
         }
 
         var chain = await chainService.GetChainByPublicIdAsync(publicId, cancellationToken);
-        if (chain is null)
+        if (chain is null || chain.Status == ChainStatus.Deleted)
         {
             logger.LogWarning("Chain {PublicId} not found during Join.", publicId);
             return Results.NotFound(new { error = "chain not found" });
@@ -100,21 +114,26 @@ public static class ChainController
             displayName,
             telegramNickname);
 
-        var (added, members) = await chainService.JoinAsync(
+        var (added, members, error) = await chainService.JoinAsync(
             chain.Id,
             validatedUser.UserId,
             displayName,
             telegramNickname,
             cancellationToken);
 
+        if (error != null)
+        {
+            return Results.BadRequest(new { error });
+        }
+
         var messageText = ChainService.FormatChainMessage(chain.Title, members);
-        await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId, chain.PublicId, messageText, cancellationToken);
+        await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId.GetValueOrDefault(), chain.PublicId, messageText, cancellationToken);
 
         return Results.Ok(new
         {
             success = true,
             joined = added,
-            updated_members = members.Select(x => new { displayName = x.Username })
+            updated_members = members.Select(x => new { displayName = x.DisplayName })
         });
     }
 
@@ -138,7 +157,7 @@ public static class ChainController
         }
 
         var chain = await chainService.GetChainByPublicIdAsync(publicId, cancellationToken);
-        if (chain is null)
+        if (chain is null || chain.Status == ChainStatus.Deleted)
         {
             logger.LogWarning("Chain {PublicId} not found during Leave.", publicId);
             return Results.NotFound(new { error = "chain not found" });
@@ -149,24 +168,31 @@ public static class ChainController
             publicId,
             validatedUser.UserId);
 
-        var (removed, members) = await chainService.LeaveAsync(
+        var (removed, members, error) = await chainService.LeaveAsync(
             chain.Id,
             validatedUser.UserId,
             cancellationToken);
 
+        if (error != null)
+        {
+            return Results.BadRequest(new { error });
+        }
+
         if (removed)
         {
             var messageText = ChainService.FormatChainMessage(chain.Title, members);
-            await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId, chain.PublicId, messageText, cancellationToken);
+            await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId.GetValueOrDefault(), chain.PublicId, messageText, cancellationToken);
         }
 
         return Results.Ok(new
         {
             success = true,
             left = removed,
-            updated_members = members.Select(x => new { displayName = x.Username })
+            updated_members = members.Select(x => new { displayName = x.DisplayName })
         });
     }
 
     public sealed record JoinRequest(string DisplayName);
+    public sealed record JoinResponse(bool Success, bool Joined, System.Collections.Generic.List<ChainMemberDto> UpdatedMembers);
+    public sealed record ChainMemberDto(string DisplayName);
 }

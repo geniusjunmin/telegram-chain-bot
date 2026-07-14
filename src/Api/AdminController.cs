@@ -13,7 +13,6 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using TelegramChainBot.Database;
 using TelegramChainBot.Database.Models;
-using TelegramChainBot.Security;
 using TelegramChainBot.Services;
 
 namespace TelegramChainBot.Api;
@@ -67,8 +66,8 @@ public static class AdminController
         var tokens = antiforgery.GetAndStoreTokens(context);
         context.Response.Cookies.Append("XSRF-TOKEN", tokens.RequestToken!, new CookieOptions
         {
-            HttpOnly = false, // Must be readable by client JS
-            Secure = true,    // Production secure
+            HttpOnly = false,
+            Secure = true,
             SameSite = SameSiteMode.Strict
         });
         return Results.Ok();
@@ -159,7 +158,7 @@ public static class AdminController
 
     private static async Task<IResult> GetChainsAsync(AppDbContext db, CancellationToken ct)
     {
-        var chains = await db.Chains.OrderByDescending(c => c.CreatedAt).ToListAsync(ct);
+        var chains = await db.Chains.Where(c => c.Status != ChainStatus.Deleted).OrderByDescending(c => c.CreatedAt).ToListAsync(ct);
         return Results.Ok(chains);
     }
 
@@ -173,10 +172,21 @@ public static class AdminController
         var chain = await db.Chains.FindAsync([id], ct);
         if (chain == null) return Results.NotFound();
 
-        db.Chains.Remove(chain);
-        var members = db.ChainMembers.Where(m => m.ChainId == id);
-        db.ChainMembers.RemoveRange(members);
-        
+        chain.Status = ChainStatus.Deleted;
+        chain.DeletedAt = DateTimeOffset.UtcNow;
+        chain.UpdatedAt = DateTimeOffset.UtcNow;
+
+        // Soft-delete active members of this chain
+        var activeMembers = await db.ChainMembers
+            .Where(m => m.ChainId == id && m.Status == ChainMemberStatus.Active)
+            .ToListAsync(ct);
+        foreach (var m in activeMembers)
+        {
+            m.Status = ChainMemberStatus.Removed;
+            m.RemovedAt = DateTimeOffset.UtcNow;
+            m.UpdatedAt = DateTimeOffset.UtcNow;
+        }
+
         await db.SaveChangesAsync(ct);
 
         await auditLog.LogAsync("DeleteChain", "Chain", id.ToString(), chatId: chain.ChatId, success: true, actorType: "Admin");
@@ -186,7 +196,10 @@ public static class AdminController
 
     private static async Task<IResult> GetMembersAsync(long id, AppDbContext db, CancellationToken ct)
     {
-        var members = await db.ChainMembers.Where(m => m.ChainId == id).OrderBy(m => m.JoinTime).ToListAsync(ct);
+        var members = await db.ChainMembers
+            .Where(m => m.ChainId == id && m.Status == ChainMemberStatus.Active)
+            .OrderBy(m => m.JoinedAt)
+            .ToListAsync(ct);
         return Results.Ok(members);
     }
 
@@ -202,15 +215,20 @@ public static class AdminController
         if (member == null) return Results.NotFound();
 
         var chainId = member.ChainId;
-        db.ChainMembers.Remove(member);
+        member.Status = ChainMemberStatus.Removed;
+        member.RemovedAt = DateTimeOffset.UtcNow;
+        member.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
 
         var chain = await db.Chains.FindAsync([chainId], ct);
         if (chain != null)
         {
-            var members = await db.ChainMembers.Where(m => m.ChainId == chainId).OrderBy(m => m.JoinTime).ToListAsync(ct);
+            var members = await db.ChainMembers
+                .Where(m => m.ChainId == chainId && m.Status == ChainMemberStatus.Active)
+                .OrderBy(m => m.JoinedAt)
+                .ToListAsync(ct);
             var messageText = ChainService.FormatChainMessage(chain.Title, members);
-            await tg.EditChainMessageAsync(chain.ChatId, chain.MessageId, chain.PublicId, messageText, ct);
+            await tg.EditChainMessageAsync(chain.ChatId, chain.MessageId.GetValueOrDefault(), chain.PublicId, messageText, ct);
         }
 
         await auditLog.LogAsync("DeleteMember", "ChainMember", id.ToString(), chatId: chain?.ChatId, success: true, actorType: "Admin");
@@ -230,21 +248,25 @@ public static class AdminController
         var member = await db.ChainMembers.FindAsync([id], ct);
         if (member == null) return Results.NotFound();
 
-        var beforeJson = System.Text.Json.JsonSerializer.Serialize(new { member.Username, member.TelegramNickname });
+        var beforeJson = System.Text.Json.JsonSerializer.Serialize(new { member.DisplayName, member.TelegramUsername });
 
-        member.Username = request.Username;
-        member.TelegramNickname = request.TelegramNickname;
+        member.DisplayName = request.Username;
+        member.TelegramUsername = request.TelegramNickname;
+        member.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
 
         var chain = await db.Chains.FindAsync([member.ChainId], ct);
         if (chain != null)
         {
-            var members = await db.ChainMembers.Where(m => m.ChainId == member.ChainId).OrderBy(m => m.JoinTime).ToListAsync(ct);
+            var members = await db.ChainMembers
+                .Where(m => m.ChainId == member.ChainId && m.Status == ChainMemberStatus.Active)
+                .OrderBy(m => m.JoinedAt)
+                .ToListAsync(ct);
             var messageText = ChainService.FormatChainMessage(chain.Title, members);
-            await tg.EditChainMessageAsync(chain.ChatId, chain.MessageId, chain.PublicId, messageText, ct);
+            await tg.EditChainMessageAsync(chain.ChatId, chain.MessageId.GetValueOrDefault(), chain.PublicId, messageText, ct);
         }
 
-        var afterJson = System.Text.Json.JsonSerializer.Serialize(new { member.Username, member.TelegramNickname });
+        var afterJson = System.Text.Json.JsonSerializer.Serialize(new { member.DisplayName, member.TelegramUsername });
         await auditLog.LogAsync("UpdateMember", "ChainMember", id.ToString(), chatId: chain?.ChatId, beforeJson: beforeJson, afterJson: afterJson, success: true, actorType: "Admin");
 
         return Results.Ok();
@@ -253,7 +275,7 @@ public static class AdminController
     private static async Task<IResult> GetAccountsAsync(AppDbContext db, CancellationToken ct)
     {
         var accounts = await db.AdminAccounts.OrderBy(a => a.Username).ToListAsync(ct);
-        return Results.Ok(accounts.Select(a => new { a.Id, a.Username, Role = a.Role.ToString(), a.IsDisabled }));
+        return Results.Ok(accounts.Select(a => new { a.Id, a.Username, Role = a.Role.ToString(), IsDisabled = !a.IsActive }));
     }
 
     private static async Task<IResult> CreateAccountAsync(
@@ -276,9 +298,13 @@ public static class AdminController
         var account = new AdminAccount
         {
             Username = request.Username,
+            NormalizedUsername = request.Username.ToUpperInvariant(),
             Role = role,
-            IsDisabled = false,
-            PasswordHash = string.Empty
+            IsActive = true,
+            PasswordHash = string.Empty,
+            SecurityStamp = Guid.NewGuid().ToString("N"),
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
         };
         account.PasswordHash = hasher.HashPassword(account, request.Password);
 
@@ -331,6 +357,9 @@ public static class AdminController
         if (account == null) return Results.NotFound();
 
         account.PasswordHash = hasher.HashPassword(account, request.Password);
+        account.SecurityStamp = Guid.NewGuid().ToString("N"); // Force session invalidation
+        account.PasswordChangedAt = DateTimeOffset.UtcNow;
+        account.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
 
         await auditLog.LogAsync("ResetAdminPassword", "AdminAccount", id.ToString(), success: true, actorType: "Admin");

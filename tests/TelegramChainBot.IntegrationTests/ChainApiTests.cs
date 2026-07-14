@@ -59,7 +59,7 @@ public class ChainApiTests : IClassFixture<CustomWebApplicationFactory>
         {
             PublicId = Guid.NewGuid().ToString("N"),
             Title = "Dinner Join Test",
-            CreatorId = 12345,
+            CreatorTelegramUserId = 12345,
             CreatedAt = DateTimeOffset.UtcNow
         };
         db.Chains.Add(chain);
@@ -106,7 +106,7 @@ public class ChainApiTests : IClassFixture<CustomWebApplicationFactory>
         {
             PublicId = Guid.NewGuid().ToString("N"),
             Title = "Dinner Join Test",
-            CreatorId = 12345,
+            CreatorTelegramUserId = 12345,
             CreatedAt = DateTimeOffset.UtcNow
         };
         db.Chains.Add(chain);
