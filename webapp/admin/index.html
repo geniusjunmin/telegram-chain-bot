@@ -4,7 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>接龙机器人管理后台</title>
-    <link rel="stylesheet" href="admin.css">
+    <link rel="stylesheet" href="css/variables.css">
+    <link rel="stylesheet" href="css/layout.css">
+    <link rel="stylesheet" href="css/components.css">
+    <link rel="stylesheet" href="css/responsive.css">
 </head>
 <body>
     <div id="login-page" class="page">
@@ -21,8 +24,12 @@
         <nav>
             <div class="nav-brand">接龙管理后台</div>
             <div class="nav-links">
+                <button id="nav-dashboard">仪表盘</button>
                 <button id="nav-chains">接龙列表</button>
+                <button id="nav-chats" style="display: none;">群聊管理</button>
                 <button id="nav-accounts" style="display: none;">管理员管理</button>
+                <button id="nav-settings" style="display: none;">系统设置</button>
+                <button id="nav-audit" style="display: none;">审计日志</button>
                 <button id="nav-change-password">修改密码</button>
                 <button id="nav-logout">退出</button>
             </div>
@@ -53,6 +60,6 @@
         </div>
     </div>
 
-    <script src="admin.js"></script>
+    <script type="module" src="admin.js"></script>
 </body>
 </html>

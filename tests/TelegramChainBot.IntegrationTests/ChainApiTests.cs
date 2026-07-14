@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.Mvc.Testing;
 using TelegramChainBot.Api;
 using TelegramChainBot.Database;
 using TelegramChainBot.Database.Models;
@@ -290,5 +291,162 @@ public class ChainApiTests : IClassFixture<CustomWebApplicationFactory>
     {
         [System.Text.Json.Serialization.JsonPropertyName("displayName")]
         public string DisplayName { get; set; } = string.Empty;
+    }
+
+    [Fact]
+    public async Task Admin_CanAccessStatsAndSettings_AfterLoginAndPasswordChange()
+    {
+        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://localhost"),
+            AllowAutoRedirect = false
+        });
+
+        // 1. Get initial CSRF token
+        var csrfResponse1 = await client.GetAsync("/api/admin/csrf");
+        Assert.Equal(HttpStatusCode.OK, csrfResponse1.StatusCode);
+        var xsrfToken1 = GetXsrfToken(csrfResponse1);
+
+        // 2. Login
+        var loginReq = new AdminController.LoginRequest("admin", "SuperSecurePassword123!");
+        var loginMsg = new HttpRequestMessage(HttpMethod.Post, "/api/admin/login")
+        {
+            Content = JsonContent.Create(loginReq)
+        };
+        if (xsrfToken1 != null)
+        {
+            loginMsg.Headers.Add("X-XSRF-TOKEN", xsrfToken1);
+        }
+        var loginResponse = await client.SendAsync(loginMsg);
+        Assert.Equal(HttpStatusCode.OK, loginResponse.StatusCode);
+
+        // 3. Get fresh post-login CSRF token
+        var csrfResponse2 = await client.GetAsync("/api/admin/csrf");
+        Assert.Equal(HttpStatusCode.OK, csrfResponse2.StatusCode);
+        var xsrfToken2 = GetXsrfToken(csrfResponse2);
+
+        // 4. Change password
+        var changePwdReq = new AdminController.ChangePasswordRequest("SuperSecurePassword123!", "NewSuperSecurePassword123!");
+        var changePwdMsg = new HttpRequestMessage(HttpMethod.Post, "/api/admin/change-password")
+        {
+            Content = JsonContent.Create(changePwdReq)
+        };
+        if (xsrfToken2 != null)
+        {
+            changePwdMsg.Headers.Add("X-XSRF-TOKEN", xsrfToken2);
+        }
+        var changeResponse = await client.SendAsync(changePwdMsg);
+        var changeResponseBody = await changeResponse.Content.ReadAsStringAsync();
+        Assert.True(changeResponse.StatusCode == HttpStatusCode.OK, $"Failed: {changeResponse.StatusCode}. Body: {changeResponseBody}");
+
+        // 4. Get fresh CSRF token for the next login (session fixation protection)
+        var csrfResponse3 = await client.GetAsync("/api/admin/csrf");
+        Assert.Equal(HttpStatusCode.OK, csrfResponse3.StatusCode);
+        var xsrfToken3 = GetXsrfToken(csrfResponse3);
+
+        // 5. Login again with the NEW password
+        var loginReq2 = new AdminController.LoginRequest("admin", "NewSuperSecurePassword123!");
+        var loginMsg2 = new HttpRequestMessage(HttpMethod.Post, "/api/admin/login")
+        {
+            Content = JsonContent.Create(loginReq2)
+        };
+        if (xsrfToken3 != null)
+        {
+            loginMsg2.Headers.Add("X-XSRF-TOKEN", xsrfToken3);
+        }
+        var loginResponse2 = await client.SendAsync(loginMsg2);
+        Assert.Equal(HttpStatusCode.OK, loginResponse2.StatusCode);
+
+        // 6. Get fresh post-login CSRF token
+        var csrfResponse4 = await client.GetAsync("/api/admin/csrf");
+        Assert.Equal(HttpStatusCode.OK, csrfResponse4.StatusCode);
+        var xsrfToken4 = GetXsrfToken(csrfResponse4);
+
+        // 6.5 Verify auth/me endpoint
+        var meResponse = await client.GetAsync("/api/admin/auth/me");
+        Assert.Equal(HttpStatusCode.OK, meResponse.StatusCode);
+        var meObj = await meResponse.Content.ReadFromJsonAsync<System.Text.Json.Nodes.JsonObject>();
+        Assert.NotNull(meObj);
+        Assert.Equal("admin", meObj["username"]?.ToString());
+        Assert.Equal("RootAdmin", meObj["role"]?.ToString());
+
+        // 7. Access dashboard-stats
+        var statsResponse = await client.GetAsync("/api/admin/dashboard-stats");
+        Assert.Equal(HttpStatusCode.OK, statsResponse.StatusCode);
+        var stats = await statsResponse.Content.ReadFromJsonAsync<System.Text.Json.Nodes.JsonObject>();
+        Assert.NotNull(stats);
+        Assert.True(stats.ContainsKey("total_groups"));
+        Assert.True(stats.ContainsKey("total_active_chains"));
+
+        // 5. Access system-settings GET
+        var settingsResponse = await client.GetAsync("/api/admin/system-settings");
+        Assert.Equal(HttpStatusCode.OK, settingsResponse.StatusCode);
+        var settings = await settingsResponse.Content.ReadFromJsonAsync<SystemSetting>();
+        Assert.NotNull(settings);
+        Assert.Equal(1, settings.Id);
+
+        // 6. Update system-settings POST
+        settings.DefaultMaxMembers = 88;
+        var updateSettingsMsg = new HttpRequestMessage(HttpMethod.Post, "/api/admin/system-settings")
+        {
+            Content = JsonContent.Create(settings)
+        };
+        if (xsrfToken4 != null)
+        {
+            updateSettingsMsg.Headers.Add("X-XSRF-TOKEN", xsrfToken4);
+        }
+        var updateResponse = await client.SendAsync(updateSettingsMsg);
+        Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
+
+        // Verify updated setting
+        var getResponse = await client.GetAsync("/api/admin/system-settings");
+        var updatedSettings = await getResponse.Content.ReadFromJsonAsync<SystemSetting>();
+        Assert.Equal(88, updatedSettings?.DefaultMaxMembers);
+    }
+
+    private static string? GetXsrfToken(HttpResponseMessage response)
+    {
+        if (response.Headers.TryGetValues("Set-Cookie", out var setCookies))
+        {
+            foreach (var cookie in setCookies)
+            {
+                if (cookie.Contains("XSRF-TOKEN="))
+                {
+                    var start = cookie.IndexOf("XSRF-TOKEN=") + "XSRF-TOKEN=".Length;
+                    var end = cookie.IndexOf(';', start);
+                    return end >= 0 ? cookie[start..end] : cookie[start..];
+                }
+            }
+        }
+        return null;
+    }
+
+    [Fact]
+    public async Task Health_Live_ReturnsHealthy()
+    {
+        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        var response = await client.GetAsync("/health/live");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var res = await response.Content.ReadFromJsonAsync<System.Text.Json.Nodes.JsonObject>();
+        Assert.Equal("Healthy", res?["status"]?.ToString());
+    }
+
+    [Fact]
+    public async Task Health_Ready_ReturnsHealthy()
+    {
+        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+
+        var response = await client.GetAsync("/health/ready");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var res = await response.Content.ReadFromJsonAsync<System.Text.Json.Nodes.JsonObject>();
+        Assert.Equal("Healthy", res?["status"]?.ToString());
+        Assert.Equal("Connected", res?["database"]?.ToString());
     }
 }

@@ -81,6 +81,14 @@ public class UpdateHandlerTests : IDisposable
             _ => "private"
         };
 
+        var entitiesJson = "";
+        if (text.StartsWith('/'))
+        {
+            var firstSpace = text.IndexOf(' ');
+            var commandLen = firstSpace >= 0 ? firstSpace : text.Length;
+            entitiesJson = ",\n\"Entities\": [\n{\n\"Type\": \"bot_command\",\n\"Offset\": 0,\n\"Length\": " + commandLen + "\n}\n]";
+        }
+
         var json = $$"""
         {
             "MessageId": 100,
@@ -95,7 +103,7 @@ public class UpdateHandlerTests : IDisposable
                 "Username": "{{username}}",
                 "FirstName": "{{firstName}}"
             },
-            "Text": "{{text}}"
+            "Text": "{{text}}"{{entitiesJson}}
         }
         """;
 
@@ -248,5 +256,100 @@ public class UpdateHandlerTests : IDisposable
         Assert.Null(managed);
 
         await _telegramServiceMock.DidNotReceive().SendTextMessageAsync(Arg.Any<long>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task HandleAsync_UpdatesCreatePolicy_WhenAdminSendsChainAdminOnly()
+    {
+        // Arrange
+        var handler = new UpdateHandler(
+            _chainServiceMock,
+            _telegramServiceMock,
+            _db,
+            _adminValidator,
+            _configuration,
+            NullLogger<UpdateHandler>.Instance);
+
+        var chatId = -100777777L;
+        _db.ManagedChats.Add(new ManagedChat
+        {
+            ChatId = chatId,
+            Title = "Config Group",
+            ChatType = "supergroup",
+            AuthorizationStatus = AuthorizationStatus.Approved,
+            CreatePolicy = CreatePolicy.Everyone,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+        await _db.SaveChangesAsync();
+
+        var mockMember = new ChatMemberOwner();
+        _botClientMock.GetChatMember(chatId, 99999L, Arg.Any<CancellationToken>()).Returns(mockMember);
+
+        var mockMsg = CreateMockMessage(chatId, ChatType.Supergroup, "/chain_admin_only on", 99999L, "owner_username", "Owner");
+        var update = new Update
+        {
+            Id = 1,
+            Message = mockMsg
+        };
+
+        // Act
+        await handler.HandleAsync(update, CancellationToken.None);
+
+        // Assert
+        var managed = await _db.ManagedChats.FindAsync(chatId);
+        Assert.NotNull(managed);
+        Assert.Equal(CreatePolicy.ChatAdministrators, managed.CreatePolicy);
+
+        await _telegramServiceMock.Received(1).SendTextMessageAsync(
+            chatId,
+            Arg.Is<string>(s => s.Contains("接龙创建策略已更新：仅限群管理员创建接龙")),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task HandleAsync_BlocksChainCreation_WhenNonAdminSendsStartChainUnderAdminOnly()
+    {
+        // Arrange
+        var handler = new UpdateHandler(
+            _chainServiceMock,
+            _telegramServiceMock,
+            _db,
+            _adminValidator,
+            _configuration,
+            NullLogger<UpdateHandler>.Instance);
+
+        var chatId = -100777778L;
+        _db.ManagedChats.Add(new ManagedChat
+        {
+            ChatId = chatId,
+            Title = "Restricted Group",
+            ChatType = "supergroup",
+            AuthorizationStatus = AuthorizationStatus.Approved,
+            CreatePolicy = CreatePolicy.ChatAdministrators,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+        await _db.SaveChangesAsync();
+
+        var mockMember = new ChatMemberMember();
+        _botClientMock.GetChatMember(chatId, 88888L, Arg.Any<CancellationToken>()).Returns(mockMember);
+
+        var mockMsg = CreateMockMessage(chatId, ChatType.Supergroup, "/start_chain Sunday Run", 88888L, "alice", "Alice");
+        var update = new Update
+        {
+            Id = 1,
+            Message = mockMsg
+        };
+
+        // Act
+        await handler.HandleAsync(update, CancellationToken.None);
+
+        // Assert
+        await _chainServiceMock.DidNotReceive().CreateChainAsync(Arg.Any<string>(), Arg.Any<long>(), Arg.Any<CancellationToken>());
+        await _telegramServiceMock.Received(1).SendTextMessageAsync(
+            chatId,
+            Arg.Is<string>(s => s.Contains("只有群管理员才能发起接龙")),
+            Arg.Any<CancellationToken>());
     }
 }

@@ -118,31 +118,61 @@ public sealed class UpdateHandler(
             }
         }
 
-        if (text.StartsWith("/whitelist_add", StringComparison.OrdinalIgnoreCase))
+        if (TryMatchCommand(message, "/whitelist_add", out var addArg))
         {
-            await HandleWhitelistAddAsync(message, text, cancellationToken);
+            await HandleWhitelistAddAsync(message, addArg, cancellationToken);
             return;
         }
-        if (text.StartsWith("/whitelist_remove", StringComparison.OrdinalIgnoreCase))
+        if (TryMatchCommand(message, "/whitelist_remove", out var removeArg))
         {
-            await HandleWhitelistRemoveAsync(message, text, cancellationToken);
+            await HandleWhitelistRemoveAsync(message, removeArg, cancellationToken);
             return;
         }
-        if (text.StartsWith("/whitelist_list", StringComparison.OrdinalIgnoreCase))
+        if (TryMatchCommand(message, "/whitelist_list", out var listArg))
         {
-            await HandleWhitelistListAsync(message, text, cancellationToken);
-            return;
-        }
-
-        if (text.StartsWith("/delete_chain", StringComparison.OrdinalIgnoreCase))
-        {
-            await DeleteChainFromGroupAsync(message, text, cancellationToken);
+            await HandleWhitelistListAsync(message, listArg, cancellationToken);
             return;
         }
 
-        if (TryParseStartChainCommand(message, out var title))
+        if (TryMatchCommand(message, "/delete_chain", out var deleteArg))
         {
-            await CreateChainAsync(message, title, cancellationToken);
+            await DeleteChainFromGroupAsync(message, deleteArg, cancellationToken);
+            return;
+        }
+
+        if (TryMatchCommand(message, "/start_chain", out var startArg))
+        {
+            await CreateChainAsync(message, startArg, cancellationToken);
+            return;
+        }
+
+        if (TryMatchCommand(message, "/close_chain", out _))
+        {
+            await CloseChainFromGroupAsync(message, cancellationToken);
+            return;
+        }
+
+        if (TryMatchCommand(message, "/leave_chain", out _))
+        {
+            await LeaveChainFromGroupAsync(message, cancellationToken);
+            return;
+        }
+
+        if (TryMatchCommand(message, "/chain_settings", out _))
+        {
+            await ShowChainSettingsAsync(message, cancellationToken);
+            return;
+        }
+
+        if (TryMatchCommand(message, "/chain_admin_only", out var adminOnlyArg))
+        {
+            await SetChainAdminOnlyAsync(message, adminOnlyArg, cancellationToken);
+            return;
+        }
+
+        if (TryMatchCommand(message, "/help", out _))
+        {
+            await ShowHelpAsync(message, cancellationToken);
             return;
         }
 
@@ -151,6 +181,34 @@ public sealed class UpdateHandler(
             await SendJoinWebAppAsync(message, chainPublicId, cancellationToken);
             return;
         }
+    }
+
+    private static bool TryMatchCommand(Message message, string commandName, out string argument)
+    {
+        argument = string.Empty;
+        var text = message.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(text)) return false;
+
+        var commandEntity = message.Entities?
+            .FirstOrDefault(entity => entity.Type == MessageEntityType.BotCommand && entity.Offset == 0);
+
+        if (commandEntity is null) return false;
+
+        var commandText = text.Substring(commandEntity.Offset, commandEntity.Length);
+        
+        var atIndex = commandText.IndexOf('@');
+        var baseCommand = atIndex >= 0 ? commandText[..atIndex] : commandText;
+
+        if (!string.Equals(baseCommand, commandName, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        argument = text.Length > commandEntity.Length
+            ? text[commandEntity.Length..].Trim()
+            : string.Empty;
+
+        return true;
     }
 
     private bool IsBotOwner(long userId)
@@ -170,20 +228,20 @@ public sealed class UpdateHandler(
         }
 
         var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length < 2)
+        if (parts.Length < 1)
         {
             await telegramService.SendTextMessageAsync(message.Chat.Id, "格式错误。用法：/whitelist_add <chatId> [status]", cancellationToken);
             return;
         }
 
-        if (!long.TryParse(parts[1], out var targetChatId))
+        if (!long.TryParse(parts[0], out var targetChatId))
         {
             await telegramService.SendTextMessageAsync(message.Chat.Id, "无效的 chatId。", cancellationToken);
             return;
         }
 
         var status = AuthorizationStatus.Approved;
-        if (parts.Length >= 3 && Enum.TryParse<AuthorizationStatus>(parts[2], true, out var parsedStatus))
+        if (parts.Length >= 2 && Enum.TryParse<AuthorizationStatus>(parts[1], true, out var parsedStatus))
         {
             status = parsedStatus;
         }
@@ -229,13 +287,13 @@ public sealed class UpdateHandler(
         }
 
         var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length < 2)
+        if (parts.Length < 1)
         {
             await telegramService.SendTextMessageAsync(message.Chat.Id, "格式错误。用法：/whitelist_remove <chatId>", cancellationToken);
             return;
         }
 
-        if (!long.TryParse(parts[1], out var targetChatId))
+        if (!long.TryParse(parts[0], out var targetChatId))
         {
             await telegramService.SendTextMessageAsync(message.Chat.Id, "无效的 chatId。", cancellationToken);
             return;
@@ -264,7 +322,7 @@ public sealed class UpdateHandler(
 
         var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         var page = 1;
-        if (parts.Length >= 2 && int.TryParse(parts[1], out var parsedPage))
+        if (parts.Length >= 1 && int.TryParse(parts[0], out var parsedPage))
         {
             page = Math.Max(1, parsedPage);
         }
@@ -316,13 +374,13 @@ public sealed class UpdateHandler(
         }
 
         var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length < 2)
+        if (parts.Length < 1)
         {
             await telegramService.SendTextMessageAsync(message.Chat.Id, "格式错误。用法：/delete_chain <publicId>", cancellationToken);
             return;
         }
 
-        var publicId = parts[1];
+        var publicId = parts[0];
         var chain = await chainService.GetChainByPublicIdAsync(publicId, cancellationToken);
         if (chain == null || chain.ChatId != message.Chat.Id)
         {
@@ -336,14 +394,55 @@ public sealed class UpdateHandler(
 
     private async Task CreateChainAsync(Message message, string title, CancellationToken cancellationToken)
     {
-        title = SanitizeChainTitle(title);
+        var managed = await db.ManagedChats.FindAsync([message.Chat.Id], cancellationToken);
+        if (managed == null || managed.AuthorizationStatus != AuthorizationStatus.Approved)
+        {
+            await telegramService.SendTextMessageAsync(message.Chat.Id, "该群聊尚未获得授权，请联系管理员。", cancellationToken);
+            return;
+        }
 
+        var creatorId = message.From?.Id ?? 0;
+        if (managed.CreatePolicy == CreatePolicy.ChatAdministrators)
+        {
+            var isGroupAdmin = await adminValidator.IsAdminOrOwnerAsync(message.Chat.Id, creatorId, cancellationToken) || IsBotOwner(creatorId);
+            if (!isGroupAdmin)
+            {
+                await telegramService.SendTextMessageAsync(message.Chat.Id, "只有群管理员才能发起接龙。", cancellationToken);
+                return;
+            }
+        }
+        else if (managed.CreatePolicy == CreatePolicy.BotOwners)
+        {
+            if (!IsBotOwner(creatorId))
+            {
+                await telegramService.SendTextMessageAsync(message.Chat.Id, "只有 Bot 拥有者才能发起接龙。", cancellationToken);
+                return;
+            }
+        }
+        else if (managed.CreatePolicy == CreatePolicy.Disabled)
+        {
+            await telegramService.SendTextMessageAsync(message.Chat.Id, "本群已禁止发起新接龙。", cancellationToken);
+            return;
+        }
+
+        var activeCount = await db.Chains.CountAsync(c => c.ChatId == message.Chat.Id && c.Status == ChainStatus.Active && !c.DeletedAt.HasValue, cancellationToken);
+        if (activeCount >= managed.MaxActiveChains)
+        {
+            await telegramService.SendTextMessageAsync(message.Chat.Id, $"本群活动接龙已达上限（最大 {managed.MaxActiveChains} 个）。", cancellationToken);
+            return;
+        }
+
+        title = SanitizeChainTitle(title);
         if (string.IsNullOrWhiteSpace(title) || title.StartsWith("@"))
         {
             title = "聚餐接龙";
         }
 
-        var creatorId = message.From?.Id ?? 0;
+        if (title.Length > 100)
+        {
+            title = title[..100];
+        }
+
         logger.LogInformation("Creating chain with Title: {Title}, Creator: {CreatorId}", title, creatorId);
 
         var chain = await chainService.CreateChainAsync(title, creatorId, cancellationToken);
@@ -354,11 +453,150 @@ public sealed class UpdateHandler(
             var (chatId, messageId) = await telegramService.SendChainMessageAsync(message.Chat.Id, chain.PublicId, output, cancellationToken);
             await chainService.SetMessageInfoAsync(chain.Id, chatId, messageId, cancellationToken);
         }
-        catch
+        catch (Exception ex)
         {
+            logger.LogError(ex, "Failed to send chain message to Telegram.");
             await chainService.DeleteChainAsync(chain.Id, cancellationToken);
             throw;
         }
+    }
+
+    private async Task CloseChainFromGroupAsync(Message message, CancellationToken cancellationToken)
+    {
+        if (message.Chat.Type != ChatType.Group && message.Chat.Type != ChatType.Supergroup) return;
+
+        var chain = await db.Chains.FirstOrDefaultAsync(c => c.ChatId == message.Chat.Id && c.Status == ChainStatus.Active && !c.DeletedAt.HasValue, cancellationToken);
+        if (chain == null)
+        {
+            await telegramService.SendTextMessageAsync(message.Chat.Id, "当前群组没有活动的接龙。", cancellationToken);
+            return;
+        }
+
+        var userId = message.From?.Id ?? 0;
+        var isCreator = chain.CreatorTelegramUserId == userId;
+        var isGroupAdmin = await adminValidator.IsAdminOrOwnerAsync(message.Chat.Id, userId, cancellationToken) || IsBotOwner(userId);
+
+        if (!isCreator && !isGroupAdmin)
+        {
+            await telegramService.SendTextMessageAsync(message.Chat.Id, "只有接龙发起人或群管理员可以关闭接龙。", cancellationToken);
+            return;
+        }
+
+        chain.Status = ChainStatus.Closed;
+        chain.ClosedAt = DateTimeOffset.UtcNow;
+        chain.ClosedByTelegramUserId = userId;
+        chain.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
+
+        var members = await chainService.GetMembersAsync(chain.Id, cancellationToken);
+        var messageText = ChainService.FormatChainMessage(chain.Title, members) + "\n\n⚠️ 接龙已关闭。";
+        await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId.GetValueOrDefault(), chain.PublicId, messageText, cancellationToken);
+        await telegramService.SendTextMessageAsync(message.Chat.Id, $"接龙 \"{chain.Title}\" 已成功关闭。", cancellationToken);
+    }
+
+    private async Task LeaveChainFromGroupAsync(Message message, CancellationToken cancellationToken)
+    {
+        if (message.Chat.Type != ChatType.Group && message.Chat.Type != ChatType.Supergroup) return;
+
+        var chain = await db.Chains.FirstOrDefaultAsync(c => c.ChatId == message.Chat.Id && c.Status == ChainStatus.Active && !c.DeletedAt.HasValue, cancellationToken);
+        if (chain == null)
+        {
+            await telegramService.SendTextMessageAsync(message.Chat.Id, "当前群组没有活动的接龙。", cancellationToken);
+            return;
+        }
+
+        var userId = message.From?.Id ?? 0;
+        var (removed, members, error) = await chainService.LeaveAsync(chain.Id, userId, cancellationToken);
+        if (error != null)
+        {
+            await telegramService.SendTextMessageAsync(message.Chat.Id, $"退出失败: {error}", cancellationToken);
+            return;
+        }
+
+        if (removed)
+        {
+            var messageText = ChainService.FormatChainMessage(chain.Title, members);
+            await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId.GetValueOrDefault(), chain.PublicId, messageText, cancellationToken);
+            await telegramService.SendTextMessageAsync(message.Chat.Id, "你已成功退出接龙。", cancellationToken);
+        }
+        else
+        {
+            await telegramService.SendTextMessageAsync(message.Chat.Id, "你尚未加入该接龙。", cancellationToken);
+        }
+    }
+
+    private async Task ShowChainSettingsAsync(Message message, CancellationToken cancellationToken)
+    {
+        if (message.Chat.Type != ChatType.Group && message.Chat.Type != ChatType.Supergroup) return;
+
+        var managed = await db.ManagedChats.FindAsync([message.Chat.Id], cancellationToken);
+        if (managed == null) return;
+
+        var policyText = managed.CreatePolicy switch
+        {
+            CreatePolicy.ChatAdministrators => "仅群管理员 (AdminOnly)",
+            CreatePolicy.Everyone => "所有群成员 (AllMembers)",
+            CreatePolicy.BotOwners => "仅Bot拥有者",
+            CreatePolicy.Disabled => "禁止创建接龙",
+            _ => managed.CreatePolicy.ToString()
+        };
+
+        var response = $"--- 群接龙设置 ---\n" +
+                       $"允许加入接龙: {(managed.IsJoinEnabled ? "是" : "否")}\n" +
+                       $"默认最大人数: {managed.DefaultMaxMembers}\n" +
+                       $"最大活动接龙数: {managed.MaxActiveChains}\n" +
+                       $"创建策略: {policyText}";
+
+        await telegramService.SendTextMessageAsync(message.Chat.Id, response, cancellationToken);
+    }
+
+    private async Task SetChainAdminOnlyAsync(Message message, string arg, CancellationToken cancellationToken)
+    {
+        if (message.Chat.Type != ChatType.Group && message.Chat.Type != ChatType.Supergroup) return;
+
+        var userId = message.From?.Id ?? 0;
+        var isGroupAdmin = await adminValidator.IsAdminOrOwnerAsync(message.Chat.Id, userId, cancellationToken) || IsBotOwner(userId);
+        if (!isGroupAdmin)
+        {
+            await telegramService.SendTextMessageAsync(message.Chat.Id, "只有群管理员可以修改设置。", cancellationToken);
+            return;
+        }
+
+        var parts = arg.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 1 || (!string.Equals(parts[0], "on", StringComparison.OrdinalIgnoreCase) && !string.Equals(parts[0], "off", StringComparison.OrdinalIgnoreCase)))
+        {
+            await telegramService.SendTextMessageAsync(message.Chat.Id, "格式错误。用法：/chain_admin_only on|off", cancellationToken);
+            return;
+        }
+
+        var policy = string.Equals(parts[0], "on", StringComparison.OrdinalIgnoreCase) ? CreatePolicy.ChatAdministrators : CreatePolicy.Everyone;
+        var managed = await db.ManagedChats.FindAsync([message.Chat.Id], cancellationToken);
+        if (managed != null)
+        {
+            managed.CreatePolicy = policy;
+            managed.UpdatedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        var policyText = policy == CreatePolicy.ChatAdministrators ? "仅限群管理员创建接龙" : "所有群成员均可创建接龙";
+        await telegramService.SendTextMessageAsync(message.Chat.Id, $"接龙创建策略已更新：{policyText}。", cancellationToken);
+    }
+
+    private async Task ShowHelpAsync(Message message, CancellationToken cancellationToken)
+    {
+        var helpText = "--- 接龙机器人使用帮助 ---\n\n" +
+                       "群聊可用命令：\n" +
+                       "/start_chain <标题> - 发起新接龙\n" +
+                       "/close_chain - 关闭当前活动接龙 (仅创建者或群管理员)\n" +
+                       "/leave_chain - 退出当前活动接龙\n" +
+                       "/delete_chain <publicId> - 删除接龙 (仅群管理员)\n" +
+                       "/chain_settings - 查看本群接龙配置\n" +
+                       "/chain_admin_only on|off - 修改接龙发起权限 (仅群管理员)\n" +
+                       "/help - 显示此帮助信息\n\n" +
+                       "私聊可用命令：\n" +
+                       "/start join_<publicId> - 私聊填写名字加入接龙";
+
+        await telegramService.SendTextMessageAsync(message.Chat.Id, helpText, cancellationToken);
     }
 
     private async Task SendJoinWebAppAsync(Message message, string chainPublicId, CancellationToken cancellationToken)
@@ -376,63 +614,6 @@ public sealed class UpdateHandler(
         }
 
         await telegramService.SendOpenChainWebAppAsync(message.Chat.Id, chain.PublicId, chain.Title, cancellationToken);
-    }
-
-    private static bool TryParseStartChainCommand(Message message, out string title)
-    {
-        title = string.Empty;
-        var text = message.Text?.Trim();
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return false;
-        }
-
-        if (TryParseCommandEntity(message, text, out title))
-        {
-            return true;
-        }
-
-        return TryParseCommandFromPlainText(text, out title);
-    }
-
-    private static bool TryParseCommandEntity(Message message, string text, out string title)
-    {
-        title = string.Empty;
-
-        var commandEntity = message.Entities?
-            .FirstOrDefault(entity => entity.Type == MessageEntityType.BotCommand && entity.Offset == 0);
-
-        if (commandEntity is null)
-        {
-            return false;
-        }
-
-        var commandText = text.Substring(commandEntity.Offset, commandEntity.Length);
-        if (!commandText.StartsWith("/start_chain", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        title = text.Length > commandEntity.Length
-            ? text[commandEntity.Length..].Trim()
-            : string.Empty;
-
-        return true;
-    }
-
-    private static bool TryParseCommandFromPlainText(string text, out string title)
-    {
-        title = string.Empty;
-
-        const string command = "/start_chain";
-        var commandIndex = text.IndexOf(command, StringComparison.OrdinalIgnoreCase);
-        if (commandIndex < 0)
-        {
-            return false;
-        }
-
-        title = text[(commandIndex + command.Length)..].Trim();
-        return true;
     }
 
     private static bool TryParseJoinChainCommand(Message message, out string chainPublicId)
@@ -492,13 +673,21 @@ public sealed class UpdateHandler(
     {
         try 
         {
-            if (string.IsNullOrWhiteSpace(callback.Data) || !callback.Data.StartsWith("join:", StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(callback.Data))
             {
                 await telegramService.AnswerCallbackAsync(callback.Id, "无效的操作", cancellationToken);
                 return;
             }
 
-            var publicId = callback.Data.Split(':', 2)[1];
+            var parts = callback.Data.Split(':', 2);
+            if (parts.Length < 2)
+            {
+                await telegramService.AnswerCallbackAsync(callback.Id, "无效的数据格式", cancellationToken);
+                return;
+            }
+
+            var action = parts[0].ToLowerInvariant();
+            var publicId = parts[1];
 
             if (callback.Message != null)
             {
@@ -528,23 +717,72 @@ public sealed class UpdateHandler(
                 telegramNickname = user.Username ?? $"user_{user.Id}";
             }
 
-            var (added, members, error) = await chainService.JoinAsync(chain.Id, user.Id, telegramNickname, telegramNickname, cancellationToken);
-            if (error != null)
+            if (action == "join")
             {
-                await telegramService.AnswerCallbackAsync(callback.Id, error, cancellationToken);
-                return;
-            }
-            
-            await telegramService.AnswerCallbackAsync(callback.Id, added ? "加入成功" : "你已经参加过了", cancellationToken);
+                var (added, members, error) = await chainService.JoinAsync(chain.Id, user.Id, telegramNickname, telegramNickname, cancellationToken);
+                if (error != null)
+                {
+                    await telegramService.AnswerCallbackAsync(callback.Id, error, cancellationToken);
+                    return;
+                }
+                
+                await telegramService.AnswerCallbackAsync(callback.Id, added ? "加入成功" : "你已经参加过了", cancellationToken);
 
-            if (added)
+                if (added)
+                {
+                    var messageText = ChainService.FormatChainMessage(chain.Title, members);
+                    await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId.GetValueOrDefault(), chain.PublicId, messageText, cancellationToken);
+                }
+            }
+            else if (action == "leave")
             {
-                var messageText = ChainService.FormatChainMessage(chain.Title, members);
+                var (removed, members, error) = await chainService.LeaveAsync(chain.Id, user.Id, cancellationToken);
+                if (error != null)
+                {
+                    await telegramService.AnswerCallbackAsync(callback.Id, error, cancellationToken);
+                    return;
+                }
+
+                await telegramService.AnswerCallbackAsync(callback.Id, removed ? "已退出接龙" : "你尚未参加此接龙", cancellationToken);
+
+                if (removed)
+                {
+                    var messageText = ChainService.FormatChainMessage(chain.Title, members);
+                    await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId.GetValueOrDefault(), chain.PublicId, messageText, cancellationToken);
+                }
+            }
+            else if (action == "close")
+            {
+                var isCreator = chain.CreatorTelegramUserId == user.Id;
+                var isGroupAdmin = false;
+                if (callback.Message != null)
+                {
+                    isGroupAdmin = await adminValidator.IsAdminOrOwnerAsync(callback.Message.Chat.Id, user.Id, cancellationToken);
+                }
+                var isBotOwner = IsBotOwner(user.Id);
+                var isBgAdmin = await db.AdminAccounts.AnyAsync(a => a.Username == user.Username && a.IsActive, cancellationToken);
+
+                if (!isCreator && !isGroupAdmin && !isBotOwner && !isBgAdmin)
+                {
+                    await telegramService.AnswerCallbackAsync(callback.Id, "仅创建者或群管理员或系统管理员可以关闭", cancellationToken);
+                    return;
+                }
+
+                chain.Status = ChainStatus.Closed;
+                chain.ClosedAt = DateTimeOffset.UtcNow;
+                chain.ClosedByTelegramUserId = user.Id;
+                chain.UpdatedAt = DateTimeOffset.UtcNow;
+                await db.SaveChangesAsync(cancellationToken);
+
+                var members = await chainService.GetMembersAsync(chain.Id, cancellationToken);
+                var messageText = ChainService.FormatChainMessage(chain.Title, members) + "\n\n⚠️ 接龙已关闭。";
                 await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId.GetValueOrDefault(), chain.PublicId, messageText, cancellationToken);
+                await telegramService.AnswerCallbackAsync(callback.Id, "接龙已关闭", cancellationToken);
             }
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            logger.LogError(ex, "Failed to handle callback query.");
             try { await telegramService.AnswerCallbackAsync(callback.Id, "出错了，请稍后再试", cancellationToken); } catch {}
         }
     }

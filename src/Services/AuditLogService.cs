@@ -73,8 +73,11 @@ public class AuditLogService(AppDbContext db, IHttpContextAccessor httpContextAc
     private static string HashIpAddress(string ip)
     {
         if (string.IsNullOrWhiteSpace(ip)) return string.Empty;
-        var bytes = Encoding.UTF8.GetBytes(ip);
-        var hash = SHA256.HashData(bytes);
-        return Convert.ToHexString(hash);
+        var keyBytes = Encoding.UTF8.GetBytes("TelegramChainBotAuditLogIPSecretKey");
+        var ipBytes = Encoding.UTF8.GetBytes(ip);
+        using var hmac = new HMACSHA256(keyBytes);
+        var hash = hmac.ComputeHash(ipBytes);
+        var hex = Convert.ToHexString(hash);
+        return hex[..Math.Min(8, hex.Length)];
     }
 }

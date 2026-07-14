@@ -55,6 +55,10 @@ public class TelegramService(
             {
                 // Ignore if message is identical
             }
+            catch (Telegram.Bot.Exceptions.ApiRequestException ex)
+            {
+                logger.LogWarning(ex, "Telegram API error editing message {MessageId} in chat {ChatId}: {Error}", messageId, chatId, ex.Message);
+            }
         }, cancellationToken);
     }
 
@@ -159,7 +163,12 @@ public class TelegramService(
             new[]
             {
                 InlineKeyboardButton.WithCallbackData("参加", $"join:{publicId}"),
-                InlineKeyboardButton.WithUrl("DIY 名字参加", joinUrl)
+                InlineKeyboardButton.WithCallbackData("退出", $"leave:{publicId}")
+            },
+            new[]
+            {
+                InlineKeyboardButton.WithUrl("填写自定义名字", joinUrl),
+                InlineKeyboardButton.WithCallbackData("关闭接龙", $"close:{publicId}")
             }
         });
     }

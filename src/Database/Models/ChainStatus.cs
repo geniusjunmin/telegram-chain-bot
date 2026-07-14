@@ -8,5 +8,6 @@ public enum ChainStatus
     Expired = 4,
     Cancelled = 5,
     Failed = 6,
-    Deleted = 7
+    Deleted = 7,
+    Completed = 8
 }

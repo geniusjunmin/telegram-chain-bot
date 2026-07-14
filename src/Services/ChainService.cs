@@ -37,6 +37,11 @@ public class ChainService(AppDbContext db)
         chain.Status = ChainStatus.Active;
         chain.TelegramSyncStatus = TelegramSyncStatus.Synced;
         chain.UpdatedAt = DateTimeOffset.UtcNow;
+
+        var managed = await db.ManagedChats.FirstOrDefaultAsync(m => m.ChatId == chatId, cancellationToken);
+        chain.MaxMembers = managed?.DefaultMaxMembers ?? 100;
+        chain.ExpiresAt = DateTimeOffset.UtcNow.AddHours(24); // default 24 hours expiry
+
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -77,9 +82,25 @@ public class ChainService(AppDbContext db)
         CancellationToken cancellationToken)
     {
         var chain = await db.Chains.FirstOrDefaultAsync(c => c.Id == chainId, cancellationToken);
-        if (chain == null) return (false, Array.Empty<ChainMember>(), "Chain not found");
+        if (chain == null || chain.DeletedAt.HasValue || chain.Status == ChainStatus.Deleted)
+        {
+            return (false, Array.Empty<ChainMember>(), "Chain not found");
+        }
 
-        if (chain.Status == ChainStatus.Closed || chain.Status == ChainStatus.Expired || chain.Status == ChainStatus.Deleted || chain.Status == ChainStatus.Cancelled)
+        if (chain.ExpiresAt.HasValue && chain.ExpiresAt.Value <= DateTimeOffset.UtcNow)
+        {
+            chain.Status = ChainStatus.Expired;
+            chain.UpdatedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync(cancellationToken);
+            return (false, await GetMembersAsync(chainId, cancellationToken), "Chain has expired");
+        }
+
+        if (chain.Status == ChainStatus.Completed)
+        {
+            return (false, await GetMembersAsync(chainId, cancellationToken), "Chain is completed");
+        }
+
+        if (chain.Status == ChainStatus.Closed || chain.Status == ChainStatus.Expired || chain.Status == ChainStatus.Cancelled)
         {
             return (false, await GetMembersAsync(chainId, cancellationToken), "Chain is not active");
         }
@@ -154,9 +175,20 @@ public class ChainService(AppDbContext db)
         CancellationToken cancellationToken)
     {
         var chain = await db.Chains.FirstOrDefaultAsync(c => c.Id == chainId, cancellationToken);
-        if (chain == null) return (false, Array.Empty<ChainMember>(), "Chain not found");
+        if (chain == null || chain.DeletedAt.HasValue || chain.Status == ChainStatus.Deleted)
+        {
+            return (false, Array.Empty<ChainMember>(), "Chain not found");
+        }
 
-        if (chain.Status == ChainStatus.Closed || chain.Status == ChainStatus.Expired || chain.Status == ChainStatus.Deleted || chain.Status == ChainStatus.Cancelled)
+        if (chain.ExpiresAt.HasValue && chain.ExpiresAt.Value <= DateTimeOffset.UtcNow)
+        {
+            chain.Status = ChainStatus.Expired;
+            chain.UpdatedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync(cancellationToken);
+            return (false, await GetMembersAsync(chainId, cancellationToken), "Chain has expired");
+        }
+
+        if (chain.Status == ChainStatus.Closed || chain.Status == ChainStatus.Expired || chain.Status == ChainStatus.Cancelled || chain.Status == ChainStatus.Completed)
         {
             return (false, await GetMembersAsync(chainId, cancellationToken), "Chain is not active");
         }

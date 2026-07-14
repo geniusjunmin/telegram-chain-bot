@@ -120,9 +120,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         modelBuilder.Entity<SystemSetting>(entity =>
         {
             entity.ToTable("system_settings");
-            entity.HasKey(x => x.Key);
-            entity.Property(x => x.Key).HasMaxLength(128);
-            entity.Property(x => x.Value).IsRequired();
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Id).ValueGeneratedNever();
+            entity.Property(x => x.WhitelistMode).HasConversion<int>().IsRequired();
+            entity.Property(x => x.DefaultCreatePolicy).HasConversion<int>().IsRequired();
+            entity.Property(x => x.UnauthorizedChatBehavior).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.UpdatedAt).HasConversion(converter).IsRequired();
         });
     }
 }

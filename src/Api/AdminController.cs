@@ -28,6 +28,7 @@ public static class AdminController
         group.MapPost("/login", LoginAsync).AllowAnonymous().RequireRateLimiting("login-limiter");
         group.MapPost("/logout", LogoutAsync).RequireAuthorization().AddEndpointFilter(AntiforgeryFilter);
         group.MapPost("/change-password", ChangePasswordAsync).RequireAuthorization("Admin.ManageSettings").AddEndpointFilter(AntiforgeryFilter);
+        group.MapGet("/auth/me", GetCurrentAdminAsync).RequireAuthorization();
         
         group.MapGet("/chains", GetChainsAsync).RequireAuthorization("Admin.Read");
         group.MapDelete("/chains/{id:long}", DeleteChainAsync).RequireAuthorization("Admin.ManageChains").AddEndpointFilter(AntiforgeryFilter);
@@ -35,6 +36,12 @@ public static class AdminController
         group.MapGet("/chains/{id:long}/members", GetMembersAsync).RequireAuthorization("Admin.Read");
         group.MapDelete("/members/{id:long}", DeleteMemberAsync).RequireAuthorization("Admin.ManageChains").AddEndpointFilter(AntiforgeryFilter);
         group.MapPut("/members/{id:long}", UpdateMemberAsync).RequireAuthorization("Admin.ManageChains").AddEndpointFilter(AntiforgeryFilter);
+
+        // Chats management endpoints
+        group.MapGet("/chats", GetChatsAsync).RequireAuthorization("Admin.Read");
+        group.MapPost("/chats/{id:long}/approve", ApproveChatAsync).RequireAuthorization("Admin.ManageChains").AddEndpointFilter(AntiforgeryFilter);
+        group.MapPost("/chats/{id:long}/block", BlockChatAsync).RequireAuthorization("Admin.ManageChains").AddEndpointFilter(AntiforgeryFilter);
+        group.MapPut("/chats/{id:long}", UpdateChatAsync).RequireAuthorization("Admin.ManageChains").AddEndpointFilter(AntiforgeryFilter);
 
         // RootAdmin management endpoints
         group.MapGet("/accounts", GetAccountsAsync).RequireAuthorization("Admin.ManageAccounts");
@@ -44,6 +51,11 @@ public static class AdminController
 
         // Audit log endpoints
         group.MapGet("/audit-logs", GetAuditLogsAsync).RequireAuthorization("Admin.Read");
+
+        // Dashboard stats and settings endpoints
+        group.MapGet("/dashboard-stats", GetDashboardStatsAsync).RequireAuthorization("Admin.Read");
+        group.MapGet("/system-settings", GetSystemSettingsAsync).RequireAuthorization("Admin.Read");
+        group.MapPost("/system-settings", UpdateSystemSettingsAsync).RequireAuthorization("Admin.ManageSettings").AddEndpointFilter(AntiforgeryFilter);
 
         return app;
     }
@@ -158,10 +170,136 @@ public static class AdminController
         }
     }
 
+    private static async Task<IResult> GetCurrentAdminAsync(
+        HttpContext context,
+        AppDbContext db,
+        CancellationToken ct)
+    {
+        var adminIdClaim = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (!int.TryParse(adminIdClaim, out var adminId))
+        {
+            return Results.Unauthorized();
+        }
+
+        var admin = await db.AdminAccounts.FindAsync([adminId], ct);
+        if (admin == null || !admin.IsActive)
+        {
+            return Results.Unauthorized();
+        }
+
+        var permissions = new List<string> { "Admin.Read" };
+        if (admin.Role == AdminRole.RootAdmin || admin.Role == AdminRole.OperatorAdmin)
+        {
+            permissions.Add("Admin.ManageChains");
+            permissions.Add("Admin.ManageSettings");
+        }
+        if (admin.Role == AdminRole.RootAdmin)
+        {
+            permissions.Add("Admin.ManageAccounts");
+        }
+
+        return Results.Ok(new
+        {
+            id = admin.Id,
+            username = admin.Username,
+            role = admin.Role.ToString(),
+            permissions = permissions,
+            mustChangePassword = admin.MustChangePassword
+        });
+    }
+
     private static async Task<IResult> GetChainsAsync(AppDbContext db, CancellationToken ct)
     {
         var chains = await db.Chains.Where(c => c.Status != ChainStatus.Deleted).OrderByDescending(c => c.CreatedAt).ToListAsync(ct);
         return Results.Ok(chains);
+    }
+
+    private static async Task<IResult> GetChatsAsync(AppDbContext db, CancellationToken ct)
+    {
+        var chats = await db.ManagedChats.OrderByDescending(c => c.CreatedAt).ToListAsync(ct);
+        return Results.Ok(chats);
+    }
+
+    private static async Task<IResult> ApproveChatAsync(
+        long id,
+        HttpContext context,
+        AppDbContext db,
+        AuditLogService auditLog,
+        CancellationToken ct)
+    {
+        var adminIdClaim = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        int.TryParse(adminIdClaim, out var adminId);
+
+        var chat = await db.ManagedChats.FindAsync([id], ct);
+        if (chat == null) return Results.NotFound();
+
+        var before = System.Text.Json.JsonSerializer.Serialize(chat);
+        chat.AuthorizationStatus = AuthorizationStatus.Approved;
+        chat.ApprovedAt = DateTimeOffset.UtcNow;
+        chat.ApprovedByAdminId = adminId;
+        chat.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        var after = System.Text.Json.JsonSerializer.Serialize(chat);
+        await auditLog.LogAsync("ApproveChat", "ManagedChat", id.ToString(), success: true, actorType: "Admin", beforeJson: before, afterJson: after);
+
+        return Results.Ok(chat);
+    }
+
+    private static async Task<IResult> BlockChatAsync(
+        long id,
+        HttpContext context,
+        AppDbContext db,
+        AuditLogService auditLog,
+        CancellationToken ct)
+    {
+        var adminIdClaim = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        int.TryParse(adminIdClaim, out var adminId);
+
+        var chat = await db.ManagedChats.FindAsync([id], ct);
+        if (chat == null) return Results.NotFound();
+
+        var before = System.Text.Json.JsonSerializer.Serialize(chat);
+        chat.AuthorizationStatus = AuthorizationStatus.Blocked;
+        chat.BlockedAt = DateTimeOffset.UtcNow;
+        chat.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        var after = System.Text.Json.JsonSerializer.Serialize(chat);
+        await auditLog.LogAsync("BlockChat", "ManagedChat", id.ToString(), success: true, actorType: "Admin", beforeJson: before, afterJson: after);
+
+        return Results.Ok(chat);
+    }
+
+    public record UpdateChatRequest(
+        bool IsJoinEnabled,
+        int DefaultMaxMembers,
+        int MaxActiveChains,
+        CreatePolicy CreatePolicy);
+
+    private static async Task<IResult> UpdateChatAsync(
+        long id,
+        UpdateChatRequest request,
+        HttpContext context,
+        AppDbContext db,
+        AuditLogService auditLog,
+        CancellationToken ct)
+    {
+        var chat = await db.ManagedChats.FindAsync([id], ct);
+        if (chat == null) return Results.NotFound();
+
+        var before = System.Text.Json.JsonSerializer.Serialize(chat);
+        chat.IsJoinEnabled = request.IsJoinEnabled;
+        chat.DefaultMaxMembers = request.DefaultMaxMembers;
+        chat.MaxActiveChains = request.MaxActiveChains;
+        chat.CreatePolicy = request.CreatePolicy;
+        chat.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        var after = System.Text.Json.JsonSerializer.Serialize(chat);
+        await auditLog.LogAsync("UpdateChat", "ManagedChat", id.ToString(), success: true, actorType: "Admin", beforeJson: before, afterJson: after);
+
+        return Results.Ok(chat);
     }
 
     private static async Task<IResult> DeleteChainAsync(
@@ -426,15 +564,12 @@ public static class AdminController
             .OrderByDescending(l => l.CreatedAt)
             .Skip((pageNum - 1) * size)
             .Take(size)
-            .ToListAsync(ct);
-
-        return Results.Ok(new
-        {
-            items = items.Select(l => new
+            .Select(l => new
             {
                 l.Id,
                 l.ActorType,
                 l.ActorAdminId,
+                ActorAdminUsername = db.AdminAccounts.Where(a => a.Id == l.ActorAdminId).Select(a => a.Username).FirstOrDefault(),
                 l.ActorTelegramUserId,
                 l.Action,
                 l.EntityType,
@@ -446,7 +581,12 @@ public static class AdminController
                 l.CorrelationId,
                 l.Success,
                 l.FailureReason
-            }),
+            })
+            .ToListAsync(ct);
+
+        return Results.Ok(new
+        {
+            items = items,
             total,
             page = pageNum,
             pageSize = size
@@ -469,7 +609,9 @@ public static class AdminController
                 {
                     var path = httpContext.Request.Path.Value ?? "";
                     if (!path.EndsWith("/change-password", StringComparison.OrdinalIgnoreCase) && 
-                        !path.EndsWith("/logout", StringComparison.OrdinalIgnoreCase))
+                        !path.EndsWith("/logout", StringComparison.OrdinalIgnoreCase) && 
+                        !path.EndsWith("/login", StringComparison.OrdinalIgnoreCase) && 
+                        !path.EndsWith("/csrf", StringComparison.OrdinalIgnoreCase))
                     {
                         return Results.Json(new { error = "You must change your password before performing this action." }, statusCode: StatusCodes.Status403Forbidden);
                     }
@@ -485,4 +627,107 @@ public static class AdminController
     public record UpdateMemberRequest(string Username, string TelegramNickname);
     public record CreateAccountRequest(string Username, string Password, string Role);
     public record ResetPasswordRequest(string Password);
+
+    private static async Task<IResult> GetDashboardStatsAsync(AppDbContext db, CancellationToken ct)
+    {
+        var totalGroups = await db.ManagedChats.CountAsync(ct);
+        var totalActiveChains = await db.Chains.CountAsync(c => c.Status == ChainStatus.Active && !c.DeletedAt.HasValue, ct);
+        
+        var todayStart = DateTimeOffset.UtcNow.Date;
+        var totalJoinsToday = await db.ChainMembers.CountAsync(m => m.JoinedAt >= todayStart, ct);
+        var totalAuditLogsToday = await db.AuditLogs.CountAsync(l => l.CreatedAt >= todayStart, ct);
+
+        var creators = await db.Chains
+            .Where(c => c.CreatedAt >= todayStart)
+            .Select(c => c.CreatorTelegramUserId)
+            .Distinct()
+            .ToListAsync(ct);
+
+        var joiners = await db.ChainMembers
+            .Where(m => m.JoinedAt >= todayStart)
+            .Select(m => m.TelegramUserId)
+            .Distinct()
+            .ToListAsync(ct);
+
+        var leavers = await db.ChainMembers
+            .Where(m => (m.LeftAt != null && m.LeftAt >= todayStart) || (m.RemovedAt != null && m.RemovedAt >= todayStart))
+            .Select(m => m.TelegramUserId)
+            .Distinct()
+            .ToListAsync(ct);
+
+        var activeUsersTodayCount = creators.Union(joiners).Union(leavers).Distinct().Count();
+
+        return Results.Ok(new
+        {
+            total_groups = totalGroups,
+            total_active_chains = totalActiveChains,
+            total_joins_today = totalJoinsToday,
+            total_audit_logs_today = totalAuditLogsToday,
+            active_users_today_count = activeUsersTodayCount
+        });
+    }
+
+    private static async Task<IResult> GetSystemSettingsAsync(AppDbContext db, CancellationToken ct)
+    {
+        var settings = await db.SystemSettings.FirstOrDefaultAsync(ct);
+        if (settings == null)
+        {
+            settings = new SystemSetting
+            {
+                Id = 1,
+                WhitelistMode = WhitelistMode.Enforced,
+                UnauthorizedChatBehavior = "WarnAndLeave",
+                DefaultCreatePolicy = CreatePolicy.Everyone,
+                DefaultMaxMembers = 100,
+                DefaultChainExpiryHours = 24,
+                MaxActiveChainsPerChat = 5,
+                TelegramInitDataMaxAgeSeconds = 86400,
+                DeletedDataRetentionDays = 30,
+                RequireMfaForSuperAdmin = false,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
+            db.SystemSettings.Add(settings);
+            await db.SaveChangesAsync(ct);
+        }
+        return Results.Ok(settings);
+    }
+
+    private static async Task<IResult> UpdateSystemSettingsAsync(
+        SystemSetting request,
+        HttpContext context,
+        AppDbContext db,
+        AuditLogService auditLog,
+        CancellationToken ct)
+    {
+        var settings = await db.SystemSettings.FirstOrDefaultAsync(ct);
+        if (settings == null)
+        {
+            settings = new SystemSetting { Id = 1 };
+            db.SystemSettings.Add(settings);
+        }
+
+        var beforeJson = System.Text.Json.JsonSerializer.Serialize(settings);
+
+        var adminIdClaim = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        int? adminId = int.TryParse(adminIdClaim, out var parsedId) ? parsedId : null;
+
+        settings.WhitelistMode = request.WhitelistMode;
+        settings.UnauthorizedChatBehavior = request.UnauthorizedChatBehavior;
+        settings.DefaultCreatePolicy = request.DefaultCreatePolicy;
+        settings.DefaultMaxMembers = request.DefaultMaxMembers;
+        settings.DefaultChainExpiryHours = request.DefaultChainExpiryHours;
+        settings.MaxActiveChainsPerChat = request.MaxActiveChainsPerChat;
+        settings.TelegramInitDataMaxAgeSeconds = request.TelegramInitDataMaxAgeSeconds;
+        settings.DeletedDataRetentionDays = request.DeletedDataRetentionDays;
+        settings.RequireMfaForSuperAdmin = request.RequireMfaForSuperAdmin;
+        settings.UpdatedAt = DateTimeOffset.UtcNow;
+        settings.UpdatedByAdminId = adminId;
+
+        await db.SaveChangesAsync(ct);
+
+        var afterJson = System.Text.Json.JsonSerializer.Serialize(settings);
+        await auditLog.LogAsync("UpdateSystemSettings", "SystemSetting", "1", beforeJson: beforeJson, afterJson: afterJson, success: true, actorType: "Admin");
+
+        return Results.Ok(settings);
+    }
 }

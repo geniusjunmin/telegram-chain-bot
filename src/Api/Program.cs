@@ -227,6 +227,23 @@ else
 }
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+app.MapGet("/health/live", () => Results.Ok(new { status = "Healthy" }));
+app.MapGet("/health/ready", async (AppDbContext db, CancellationToken ct) =>
+{
+    try
+    {
+        var canConnect = await db.Database.CanConnectAsync(ct);
+        if (canConnect)
+        {
+            return Results.Ok(new { status = "Healthy", database = "Connected" });
+        }
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+    catch
+    {
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+});
 
 // 彻底修复：使用固定路径 /telegram/webhook 并验证 X-Telegram-Bot-Api-Secret-Token 头
 app.MapPost("/telegram/webhook", async (
