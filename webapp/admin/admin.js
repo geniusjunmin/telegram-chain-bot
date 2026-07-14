@@ -5,10 +5,18 @@ function getCookie(name) {
     return null;
 }
 
-let isPageInitialized = false;
+// Check session on load
+document.addEventListener("DOMContentLoaded", () => {
+    document.getElementById("login-btn").addEventListener("click", login);
+    document.getElementById("nav-chains").addEventListener("click", showChains);
+    document.getElementById("nav-accounts").addEventListener("click", showAccounts);
+    document.getElementById("nav-change-password").addEventListener("click", showChangePassword);
+    document.getElementById("nav-logout").addEventListener("click", logout);
+    document.getElementById("modal-save-btn").addEventListener("click", saveMember);
+    document.getElementById("modal-cancel-btn").addEventListener("click", closeModal);
 
-// Check status on load
-checkSessionInit();
+    checkSessionInit();
+});
 
 async function checkSessionInit() {
     const role = localStorage.getItem('adminRole');
@@ -93,47 +101,79 @@ function showAdminPage() {
 
 async function showChains() {
     const content = document.getElementById('content');
-    content.innerHTML = '<h2>加载中...</h2>';
+    content.textContent = '';
+
+    const h2 = document.createElement("h2");
+    h2.textContent = "加载中...";
+    content.appendChild(h2);
     
     const role = localStorage.getItem('adminRole');
     const isAuditor = role === 'AuditorAdmin';
 
     try {
         const chains = await apiFetch('/api/admin/chains');
-        let html = `
-            <div class="header-action">
-                <h1>所有接龙</h1>
-            </div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>标题</th>
-                        <th>创建时间</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-        `;
-        
-        chains.forEach(c => {
-            html += `
-                <tr>
-                    <td>${c.id}</td>
-                    <td>${c.title}</td>
-                    <td>${new Date(c.createdAt).toLocaleString()}</td>
-                    <td>
-                        <button onclick="viewMembers(${c.id}, '${c.title.replace(/'/g, "\\'")}')">查看成员</button>
-                        ${isAuditor ? '' : `<button class="danger" onclick="deleteChain(${c.id})">删除</button>`}
-                    </td>
-                </tr>
-            `;
+        content.textContent = '';
+
+        const headerDiv = document.createElement("div");
+        headerDiv.className = "header-action";
+        const h1 = document.createElement("h1");
+        h1.textContent = "所有接龙";
+        headerDiv.appendChild(h1);
+        content.appendChild(headerDiv);
+
+        const table = document.createElement("table");
+        const thead = document.createElement("thead");
+        const headerRow = document.createElement("tr");
+        ["ID", "标题", "创建时间", "操作"].forEach(text => {
+            const th = document.createElement("th");
+            th.textContent = text;
+            headerRow.appendChild(th);
         });
-        
-        html += '</tbody></table>';
-        content.innerHTML = html;
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement("tbody");
+        chains.forEach(c => {
+            const row = document.createElement("tr");
+
+            const tdId = document.createElement("td");
+            tdId.textContent = c.id;
+            row.appendChild(tdId);
+
+            const tdTitle = document.createElement("td");
+            tdTitle.textContent = c.title;
+            row.appendChild(tdTitle);
+
+            const tdTime = document.createElement("td");
+            tdTime.textContent = new Date(c.createdAt).toLocaleString();
+            row.appendChild(tdTime);
+
+            const tdActions = document.createElement("td");
+            
+            const btnView = document.createElement("button");
+            btnView.textContent = "查看成员";
+            btnView.addEventListener("click", () => viewMembers(c.id, c.title));
+            tdActions.appendChild(btnView);
+
+            if (!isAuditor) {
+                const btnDelete = document.createElement("button");
+                btnDelete.className = "danger";
+                btnDelete.textContent = "删除";
+                btnDelete.addEventListener("click", () => deleteChain(c.id));
+                tdActions.appendChild(btnDelete);
+            }
+
+            row.appendChild(tdActions);
+            tbody.appendChild(row);
+        });
+
+        table.appendChild(tbody);
+        content.appendChild(table);
     } catch (e) {
-        content.innerHTML = `<p class="error">加载失败: ${e.message}</p>`;
+        const pErr = document.createElement("p");
+        pErr.className = "error";
+        pErr.textContent = `加载失败: ${e.message}`;
+        content.appendChild(pErr);
     }
 }
 
@@ -149,52 +189,90 @@ async function deleteChain(id) {
 
 async function viewMembers(chainId, title) {
     const content = document.getElementById('content');
-    content.innerHTML = `<h2>正在获取 [${title}] 的成员...</h2>`;
+    content.textContent = '';
+
+    const h2 = document.createElement("h2");
+    h2.textContent = `正在获取 [${title}] 的成员...`;
+    content.appendChild(h2);
     
     const role = localStorage.getItem('adminRole');
     const isAuditor = role === 'AuditorAdmin';
 
     try {
         const members = await apiFetch(`/api/admin/chains/${chainId}/members`);
-        let html = `
-            <div class="header-action">
-                <h1>接龙成员: ${title}</h1>
-                <button class="secondary" onclick="showChains()">返回列表</button>
-            </div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>用户名</th>
-                        <th>TG 昵称</th>
-                        <th>加入时间</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-        `;
-        
-        members.forEach(m => {
-            html += `
-                <tr>
-                    <td>${m.id}</td>
-                    <td>${m.username}</td>
-                    <td>${m.telegramNickname || '-'}</td>
-                    <td>${new Date(m.joinTime).toLocaleString()}</td>
-                    <td>
-                        ${isAuditor ? '-' : `
-                            <button onclick="openEditMember(${m.id}, '${m.username.replace(/'/g, "\\'")}', '${(m.telegramNickname || '').replace(/'/g, "\\'")}')">修改</button>
-                            <button class="danger" onclick="deleteMember(${m.id}, ${chainId}, '${title.replace(/'/g, "\\'")}')">删除</button>
-                        `}
-                    </td>
-                </tr>
-            `;
+        content.textContent = '';
+
+        const headerDiv = document.createElement("div");
+        headerDiv.className = "header-action";
+        const h1 = document.createElement("h1");
+        h1.textContent = `接龙成员: ${title}`;
+        headerDiv.appendChild(h1);
+
+        const btnBack = document.createElement("button");
+        btnBack.className = "secondary";
+        btnBack.textContent = "返回列表";
+        btnBack.addEventListener("click", showChains);
+        headerDiv.appendChild(btnBack);
+        content.appendChild(headerDiv);
+
+        const table = document.createElement("table");
+        const thead = document.createElement("thead");
+        const headerRow = document.createElement("tr");
+        ["ID", "用户名", "TG 昵称", "加入时间", "操作"].forEach(text => {
+            const th = document.createElement("th");
+            th.textContent = text;
+            headerRow.appendChild(th);
         });
-        
-        html += '</tbody></table>';
-        content.innerHTML = html;
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement("tbody");
+        members.forEach(m => {
+            const row = document.createElement("tr");
+
+            const tdId = document.createElement("td");
+            tdId.textContent = m.id;
+            row.appendChild(tdId);
+
+            const tdUser = document.createElement("td");
+            tdUser.textContent = m.displayName;
+            row.appendChild(tdUser);
+
+            const tdNick = document.createElement("td");
+            tdNick.textContent = m.telegramUsername || '-';
+            row.appendChild(tdNick);
+
+            const tdTime = document.createElement("td");
+            tdTime.textContent = new Date(m.joinedAt).toLocaleString();
+            row.appendChild(tdTime);
+
+            const tdActions = document.createElement("td");
+            if (isAuditor) {
+                tdActions.textContent = '-';
+            } else {
+                const btnEdit = document.createElement("button");
+                btnEdit.textContent = "修改";
+                btnEdit.addEventListener("click", () => openEditMember(m.id, m.displayName, m.telegramUsername || ''));
+                tdActions.appendChild(btnEdit);
+
+                const btnDel = document.createElement("button");
+                btnDel.className = "danger";
+                btnDel.textContent = "删除";
+                btnDel.addEventListener("click", () => deleteMember(m.id, chainId, title));
+                tdActions.appendChild(btnDel);
+            }
+
+            row.appendChild(tdActions);
+            tbody.appendChild(row);
+        });
+
+        table.appendChild(tbody);
+        content.appendChild(table);
     } catch (e) {
-        content.innerHTML = `<p class="error">加载失败: ${e.message}</p>`;
+        const pErr = document.createElement("p");
+        pErr.className = "error";
+        pErr.textContent = `加载失败: ${e.message}`;
+        content.appendChild(pErr);
     }
 }
 
@@ -238,25 +316,59 @@ async function saveMember() {
 
 function showChangePassword() {
     const content = document.getElementById('content');
-    content.innerHTML = `
-        <div class="change-pw-container card">
-            <h1>修改管理员密码</h1>
-            <div class="form-group">
-                <label>旧密码:</label>
-                <input type="password" id="old-password">
-            </div>
-            <div class="form-group">
-                <label>新密码:</label>
-                <input type="password" id="new-password">
-            </div>
-            <div class="form-group">
-                <label>确认新密码:</label>
-                <input type="password" id="confirm-password">
-            </div>
-            <button onclick="updatePassword()">确认修改</button>
-            <p id="pw-error" class="error"></p>
-        </div>
-    `;
+    content.textContent = '';
+
+    const card = document.createElement("div");
+    card.className = "change-pw-container card";
+
+    const h1 = document.createElement("h1");
+    h1.textContent = "修改管理员密码";
+    card.appendChild(h1);
+
+    const fgOld = document.createElement("div");
+    fgOld.className = "form-group";
+    const lblOld = document.createElement("label");
+    lblOld.textContent = "旧密码:";
+    const inputOld = document.createElement("input");
+    inputOld.type = "password";
+    inputOld.id = "old-password";
+    fgOld.appendChild(lblOld);
+    fgOld.appendChild(inputOld);
+    card.appendChild(fgOld);
+
+    const fgNew = document.createElement("div");
+    fgNew.className = "form-group";
+    const lblNew = document.createElement("label");
+    lblNew.textContent = "新密码:";
+    const inputNew = document.createElement("input");
+    inputNew.type = "password";
+    inputNew.id = "new-password";
+    fgNew.appendChild(lblNew);
+    fgNew.appendChild(inputNew);
+    card.appendChild(fgNew);
+
+    const fgConf = document.createElement("div");
+    fgConf.className = "form-group";
+    const lblConf = document.createElement("label");
+    lblConf.textContent = "确认新密码:";
+    const inputConf = document.createElement("input");
+    inputConf.type = "password";
+    inputConf.id = "confirm-password";
+    fgConf.appendChild(lblConf);
+    fgConf.appendChild(inputConf);
+    card.appendChild(fgConf);
+
+    const btnSubmit = document.createElement("button");
+    btnSubmit.textContent = "确认修改";
+    btnSubmit.addEventListener("click", updatePassword);
+    card.appendChild(btnSubmit);
+
+    const errorEl = document.createElement("p");
+    errorEl.id = "pw-error";
+    errorEl.className = "error";
+    card.appendChild(errorEl);
+
+    content.appendChild(card);
 }
 
 async function updatePassword() {
@@ -284,77 +396,168 @@ async function updatePassword() {
 
 async function showAccounts() {
     const content = document.getElementById('content');
-    content.innerHTML = '<h2>加载中...</h2>';
+    content.textContent = '';
+
+    const h2 = document.createElement("h2");
+    h2.textContent = "加载中...";
+    content.appendChild(h2);
     
     try {
         const accounts = await apiFetch('/api/admin/accounts');
-        let html = `
-            <div class="header-action">
-                <h1>管理员管理</h1>
-                <button class="primary" onclick="showCreateAccountForm()">新建管理员</button>
-            </div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>用户名</th>
-                        <th>角色</th>
-                        <th>是否禁用</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-        `;
-        
-        accounts.forEach(a => {
-            html += `
-                <tr>
-                    <td>${a.id}</td>
-                    <td>${a.username}</td>
-                    <td>${a.role}</td>
-                    <td>${a.isDisabled ? '是' : '否'}</td>
-                    <td>
-                        <button onclick="showResetPasswordForm(${a.id}, '${a.username}')">重置密码</button>
-                        ${a.role === 'RootAdmin' ? '' : `<button class="danger" onclick="deleteAccount(${a.id}, '${a.username}')">删除</button>`}
-                    </td>
-                </tr>
-            `;
+        content.textContent = '';
+
+        const headerDiv = document.createElement("div");
+        headerDiv.className = "header-action";
+        const h1 = document.createElement("h1");
+        h1.textContent = "管理员管理";
+        headerDiv.appendChild(h1);
+
+        const btnCreate = document.createElement("button");
+        btnCreate.className = "primary";
+        btnCreate.textContent = "新建管理员";
+        btnCreate.addEventListener("click", showCreateAccountForm);
+        headerDiv.appendChild(btnCreate);
+        content.appendChild(headerDiv);
+
+        const table = document.createElement("table");
+        const thead = document.createElement("thead");
+        const headerRow = document.createElement("tr");
+        ["ID", "用户名", "角色", "是否禁用", "操作"].forEach(text => {
+            const th = document.createElement("th");
+            th.textContent = text;
+            headerRow.appendChild(th);
         });
-        
-        html += '</tbody></table>';
-        content.innerHTML = html;
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement("tbody");
+        accounts.forEach(a => {
+            const row = document.createElement("tr");
+
+            const tdId = document.createElement("td");
+            tdId.textContent = a.id;
+            row.appendChild(tdId);
+
+            const tdUser = document.createElement("td");
+            tdUser.textContent = a.username;
+            row.appendChild(tdUser);
+
+            const tdRole = document.createElement("td");
+            tdRole.textContent = a.role;
+            row.appendChild(tdRole);
+
+            const tdDisabled = document.createElement("td");
+            tdDisabled.textContent = a.isDisabled ? '是' : '否';
+            row.appendChild(tdDisabled);
+
+            const tdActions = document.createElement("td");
+            
+            const btnReset = document.createElement("button");
+            btnReset.textContent = "重置密码";
+            btnReset.addEventListener("click", () => showResetPasswordForm(a.id, a.username));
+            tdActions.appendChild(btnReset);
+
+            if (a.role !== 'RootAdmin') {
+                const btnDel = document.createElement("button");
+                btnDel.className = "danger";
+                btnDel.textContent = "删除";
+                btnDel.addEventListener("click", () => deleteAccount(a.id, a.username));
+                tdActions.appendChild(btnDel);
+            }
+
+            row.appendChild(tdActions);
+            tbody.appendChild(row);
+        });
+
+        table.appendChild(tbody);
+        content.appendChild(table);
     } catch (e) {
-        content.innerHTML = `<p class="error">加载失败: ${e.message}</p>`;
+        const pErr = document.createElement("p");
+        pErr.className = "error";
+        pErr.textContent = `加载失败: ${e.message}`;
+        content.appendChild(pErr);
     }
 }
 
 function showCreateAccountForm() {
     const content = document.getElementById('content');
-    content.innerHTML = `
-        <div class="change-pw-container card">
-            <h1>新建管理员账号</h1>
-            <div class="form-group">
-                <label>用户名:</label>
-                <input type="text" id="new-username">
-            </div>
-            <div class="form-group">
-                <label>密码:</label>
-                <input type="password" id="new-password">
-            </div>
-            <div class="form-group">
-                <label>角色:</label>
-                <select id="new-role">
-                    <option value="OperatorAdmin">OperatorAdmin (运营)</option>
-                    <option value="AuditorAdmin">AuditorAdmin (审计)</option>
-                </select>
-            </div>
-            <div class="form-group" style="display: flex; gap: 10px; margin-top: 15px;">
-                <button onclick="createAccount()">保存</button>
-                <button class="secondary" onclick="showAccounts()">取消</button>
-            </div>
-            <p id="create-error" class="error"></p>
-        </div>
-    `;
+    content.textContent = '';
+
+    const card = document.createElement("div");
+    card.className = "change-pw-container card";
+
+    const h1 = document.createElement("h1");
+    h1.textContent = "新建管理员账号";
+    card.appendChild(h1);
+
+    const fgUser = document.createElement("div");
+    fgUser.className = "form-group";
+    const lblUser = document.createElement("label");
+    lblUser.textContent = "用户名:";
+    const inputUser = document.createElement("input");
+    inputUser.type = "text";
+    inputUser.id = "new-username";
+    fgUser.appendChild(lblUser);
+    fgUser.appendChild(inputUser);
+    card.appendChild(fgUser);
+
+    const fgPass = document.createElement("div");
+    fgPass.className = "form-group";
+    const lblPass = document.createElement("label");
+    lblPass.textContent = "密码:";
+    const inputPass = document.createElement("input");
+    inputPass.type = "password";
+    inputPass.id = "new-password";
+    fgPass.appendChild(lblPass);
+    fgPass.appendChild(inputPass);
+    card.appendChild(fgPass);
+
+    const fgRole = document.createElement("div");
+    fgRole.className = "form-group";
+    const lblRole = document.createElement("label");
+    lblRole.textContent = "角色:";
+    const selectRole = document.createElement("select");
+    selectRole.id = "new-role";
+
+    const optOp = document.createElement("option");
+    optOp.value = "OperatorAdmin";
+    optOp.textContent = "OperatorAdmin (运营)";
+    selectRole.appendChild(optOp);
+
+    const optAud = document.createElement("option");
+    optAud.value = "AuditorAdmin";
+    optAud.textContent = "AuditorAdmin (审计)";
+    selectRole.appendChild(optAud);
+
+    fgRole.appendChild(lblRole);
+    fgRole.appendChild(selectRole);
+    card.appendChild(fgRole);
+
+    const fgActions = document.createElement("div");
+    fgActions.className = "form-group";
+    fgActions.style.display = "flex";
+    fgActions.style.gap = "10px";
+    fgActions.style.marginTop = "15px";
+
+    const btnSave = document.createElement("button");
+    btnSave.textContent = "保存";
+    btnSave.addEventListener("click", createAccount);
+    fgActions.appendChild(btnSave);
+
+    const btnCancel = document.createElement("button");
+    btnCancel.className = "secondary";
+    btnCancel.textContent = "取消";
+    btnCancel.addEventListener("click", showAccounts);
+    fgActions.appendChild(btnCancel);
+
+    card.appendChild(fgActions);
+
+    const errorEl = document.createElement("p");
+    errorEl.id = "create-error";
+    errorEl.className = "error";
+    card.appendChild(errorEl);
+
+    content.appendChild(card);
 }
 
 async function createAccount() {
@@ -376,21 +579,57 @@ async function createAccount() {
 
 function showResetPasswordForm(id, username) {
     const content = document.getElementById('content');
-    content.innerHTML = `
-        <div class="change-pw-container card">
-            <h1>重置密码: ${username}</h1>
-            <input type="hidden" id="reset-id" value="${id}">
-            <div class="form-group">
-                <label>新密码:</label>
-                <input type="password" id="reset-password">
-            </div>
-            <div class="form-group" style="display: flex; gap: 10px; margin-top: 15px;">
-                <button onclick="resetPassword()">确认重置</button>
-                <button class="secondary" onclick="showAccounts()">取消</button>
-            </div>
-            <p id="reset-error" class="error"></p>
-        </div>
-    `;
+    content.textContent = '';
+
+    const card = document.createElement("div");
+    card.className = "change-pw-container card";
+
+    const h1 = document.createElement("h1");
+    h1.textContent = `重置密码: ${username}`;
+    card.appendChild(h1);
+
+    const inputId = document.createElement("input");
+    inputId.type = "hidden";
+    inputId.id = "reset-id";
+    inputId.value = id;
+    card.appendChild(inputId);
+
+    const fgPass = document.createElement("div");
+    fgPass.className = "form-group";
+    const lblPass = document.createElement("label");
+    lblPass.textContent = "新密码:";
+    const inputPass = document.createElement("input");
+    inputPass.type = "password";
+    inputPass.id = "reset-password";
+    fgPass.appendChild(lblPass);
+    fgPass.appendChild(inputPass);
+    card.appendChild(fgPass);
+
+    const fgActions = document.createElement("div");
+    fgActions.className = "form-group";
+    fgActions.style.display = "flex";
+    fgActions.style.gap = "10px";
+    fgActions.style.marginTop = "15px";
+
+    const btnReset = document.createElement("button");
+    btnReset.textContent = "确认重置";
+    btnReset.addEventListener("click", resetPassword);
+    fgActions.appendChild(btnReset);
+
+    const btnCancel = document.createElement("button");
+    btnCancel.className = "secondary";
+    btnCancel.textContent = "取消";
+    btnCancel.addEventListener("click", showAccounts);
+    fgActions.appendChild(btnCancel);
+
+    card.appendChild(fgActions);
+
+    const errorEl = document.createElement("p");
+    errorEl.id = "reset-error";
+    errorEl.className = "error";
+    card.appendChild(errorEl);
+
+    content.appendChild(card);
 }
 
 async function resetPassword() {

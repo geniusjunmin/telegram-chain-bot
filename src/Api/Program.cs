@@ -166,6 +166,39 @@ await using (var scope = app.Services.CreateAsyncScope())
     await tg.EnsureWebhookAsync(CancellationToken.None);
 }
 
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (Exception ex)
+    {
+        var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, "An unhandled exception occurred.");
+        var problem = new Microsoft.AspNetCore.Mvc.ProblemDetails
+        {
+            Status = StatusCodes.Status500InternalServerError,
+            Title = "An error occurred while processing your request.",
+            Detail = app.Environment.IsDevelopment() ? ex.ToString() : null,
+            Instance = context.Request.Path
+        };
+        
+        context.Response.ContentType = "application/problem+json; charset=utf-8";
+        context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        var json = JsonSerializer.Serialize(problem);
+        await context.Response.WriteAsync(json);
+    }
+});
+
+app.Use(async (context, next) =>
+{
+    context.Response.Headers.Append("Content-Security-Policy", "default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';");
+    context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
+    context.Response.Headers.Append("X-Frame-Options", "DENY");
+    await next();
+});
+
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
@@ -242,6 +275,11 @@ app.MapPost("/telegram/webhook", async (
 
 app.MapChainEndpoints();
 app.MapAdminEndpoints();
+
+if (app.Environment.IsDevelopment())
+{
+    app.MapGet("/api/debug/error", () => { throw new InvalidOperationException("Test exception"); });
+}
 
 app.Run();
 
