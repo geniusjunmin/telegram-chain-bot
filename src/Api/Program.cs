@@ -300,12 +300,26 @@ app.MapGet("/health/live", () => Results.Ok(new { status = "Healthy" }));
 app.MapGet("/admin", () => Results.Redirect("/webapp/admin/"));
 app.MapGet("/", () => Results.Redirect("/webapp/"));
 
-app.MapGet("/webapp", (HttpContext context) => Results.Redirect("/webapp/"));
-app.MapGet("/webapp/", async (AppDbContext db, HttpContext context) => await ServeIndexHtmlAsync("index.html", db, context));
+app.MapGet("/webapp", async (AppDbContext db, HttpContext context) =>
+{
+    var path = context.Request.Path.Value ?? "";
+    if (!path.EndsWith("/"))
+    {
+        return Results.Redirect(path + "/");
+    }
+    return await ServeIndexHtmlAsync("index.html", db, context);
+});
 app.MapGet("/webapp/index.html", async (AppDbContext db, HttpContext context) => await ServeIndexHtmlAsync("index.html", db, context));
 
-app.MapGet("/webapp/admin", (HttpContext context) => Results.Redirect("/webapp/admin/"));
-app.MapGet("/webapp/admin/", async (AppDbContext db, HttpContext context) => await ServeIndexHtmlAsync("admin/index.html", db, context));
+app.MapGet("/webapp/admin", async (AppDbContext db, HttpContext context) =>
+{
+    var path = context.Request.Path.Value ?? "";
+    if (!path.EndsWith("/"))
+    {
+        return Results.Redirect(path + "/");
+    }
+    return await ServeIndexHtmlAsync("admin/index.html", db, context);
+});
 app.MapGet("/webapp/admin/index.html", async (AppDbContext db, HttpContext context) => await ServeIndexHtmlAsync("admin/index.html", db, context));
 
 string GetWebappRoot()
