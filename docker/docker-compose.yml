@@ -22,7 +22,7 @@ services:
       TELEGRAM_INIT_DATA_MAX_AGE_SECONDS: "${TELEGRAM_INIT_DATA_MAX_AGE_SECONDS}"
       REQUIRE_MFA_FOR_SUPERADMIN: "${REQUIRE_MFA_FOR_SUPERADMIN}"
     ports:
-      - "127.0.0.1:8787:8080"
+      - "8787:8080"
     volumes:
       - ../data:/app/data
       - ../backups:/app/backups
