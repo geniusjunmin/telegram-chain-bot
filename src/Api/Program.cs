@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.DataProtection;
 using System.IO;
 using System.Text.Json;
@@ -146,6 +147,13 @@ builder.Services.AddAntiforgery(options =>
     options.HeaderName = "X-XSRF-TOKEN";
 });
 
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+});
+
 builder.Services.AddRateLimiter(options =>
 {
     options.AddFixedWindowLimiter("login-limiter", opt =>
@@ -214,6 +222,8 @@ await using (var scope = app.Services.CreateAsyncScope())
     var tg = scope.ServiceProvider.GetRequiredService<TelegramService>();
     await tg.EnsureWebhookAsync(CancellationToken.None);
 }
+
+app.UseForwardedHeaders();
 
 app.Use(async (context, next) =>
 {
