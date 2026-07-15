@@ -126,6 +126,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.Property(x => x.WhitelistMode).HasConversion<int>().IsRequired();
             entity.Property(x => x.DefaultCreatePolicy).HasConversion<int>().IsRequired();
             entity.Property(x => x.UnauthorizedChatBehavior).HasMaxLength(64).IsRequired();
+            entity.Property(x => x.StaticVersion).HasMaxLength(64).HasDefaultValue("1.0.0").IsRequired();
             entity.Property(x => x.UpdatedAt).HasConversion(converter).IsRequired();
         });
 

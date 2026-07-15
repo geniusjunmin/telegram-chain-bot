@@ -299,6 +299,68 @@ app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 app.MapGet("/health/live", () => Results.Ok(new { status = "Healthy" }));
 app.MapGet("/admin", () => Results.Redirect("/webapp/admin/"));
 app.MapGet("/", () => Results.Redirect("/webapp/"));
+
+app.MapGet("/webapp", (HttpContext context) => Results.Redirect("/webapp/"));
+app.MapGet("/webapp/", async (AppDbContext db, HttpContext context) => await ServeIndexHtmlAsync("index.html", db, context));
+app.MapGet("/webapp/index.html", async (AppDbContext db, HttpContext context) => await ServeIndexHtmlAsync("index.html", db, context));
+
+app.MapGet("/webapp/admin", (HttpContext context) => Results.Redirect("/webapp/admin/"));
+app.MapGet("/webapp/admin/", async (AppDbContext db, HttpContext context) => await ServeIndexHtmlAsync("admin/index.html", db, context));
+app.MapGet("/webapp/admin/index.html", async (AppDbContext db, HttpContext context) => await ServeIndexHtmlAsync("admin/index.html", db, context));
+
+string GetWebappRoot()
+{
+    var webPath = Path.GetFullPath(Path.Combine(app.Environment.ContentRootPath, "..", "webapp"));
+    if (Directory.Exists(webPath)) return webPath;
+    return Path.Combine(app.Environment.ContentRootPath, "webapp");
+}
+
+async Task<IResult> ServeIndexHtmlAsync(string relativePath, AppDbContext db, HttpContext context)
+{
+    var root = GetWebappRoot();
+    var filePath = Path.Combine(root, relativePath);
+    if (!System.IO.File.Exists(filePath))
+    {
+        return Results.NotFound();
+    }
+
+    var html = await System.IO.File.ReadAllTextAsync(filePath);
+    var settings = await db.SystemSettings.FirstOrDefaultAsync();
+    var version = settings?.StaticVersion ?? "1.0.0";
+
+    html = html.Replace("href=\"style.css?v=20260310-1\"", $"href=\"style.css?v={version}\"");
+    html = html.Replace("src=\"app.js?v=20260310-1\"", $"src=\"app.js?v={version}\"");
+
+    html = html.Replace("href=\"css/variables.css\"", $"href=\"css/variables.css?v={version}\"");
+    html = html.Replace("href=\"css/layout.css\"", $"href=\"css/layout.css?v={version}\"");
+    html = html.Replace("href=\"css/components.css\"", $"href=\"css/components.css?v={version}\"");
+    html = html.Replace("href=\"css/responsive.css\"", $"href=\"css/responsive.css?v={version}\"");
+    html = html.Replace("src=\"admin.js\"", $"src=\"admin.js?v={version}\"");
+
+    var importMap = $$"""
+<script type="importmap">
+{
+  "imports": {
+    "./admin.js": "./admin.js?v={{version}}",
+    "./js/router.js": "./js/router.js?v={{version}}",
+    "./js/auth.js": "./js/auth.js?v={{version}}",
+    "./js/dom.js": "./js/dom.js?v={{version}}",
+    "./js/api.js": "./js/api.js?v={{version}}",
+    "./js/views/dashboard.js": "./js/views/dashboard.js?v={{version}}",
+    "./js/views/chains.js": "./js/views/chains.js?v={{version}}",
+    "./js/views/chats.js": "./js/views/chats.js?v={{version}}",
+    "./js/views/admins.js": "./js/views/admins.js?v={{version}}",
+    "./js/views/settings.js": "./js/views/settings.js?v={{version}}",
+    "./js/views/audit.js": "./js/views/audit.js?v={{version}}"
+  }
+}
+</script>
+</head>
+""";
+    html = html.Replace("</head>", importMap);
+
+    return Results.Content(html, "text/html", System.Text.Encoding.UTF8);
+}
 app.MapGet("/health/ready", async (
     AppDbContext db,
     IConfiguration config,

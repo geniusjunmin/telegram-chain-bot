@@ -1126,6 +1126,7 @@ public static class AdminController
         settings.DeletedDataRetentionDays = request.DeletedDataRetentionDays;
         settings.RequireMfaForSuperAdmin = request.RequireMfaForSuperAdmin;
         settings.BotToken = request.BotToken;
+        settings.StaticVersion = string.IsNullOrWhiteSpace(request.StaticVersion) ? "1.0.0" : request.StaticVersion.Trim();
         settings.UpdatedAt = DateTimeOffset.UtcNow;
         settings.UpdatedByAdminId = adminId;
 

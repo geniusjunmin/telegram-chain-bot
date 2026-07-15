@@ -171,6 +171,7 @@ public sealed class DatabaseBootstrapper(
                 TelegramInitDataMaxAgeSeconds = 86400,
                 DeletedDataRetentionDays = 30,
                 RequireMfaForSuperAdmin = false,
+                StaticVersion = "1.0.0",
                 UpdatedAt = DateTimeOffset.UtcNow
             };
             db.SystemSettings.Add(settings);

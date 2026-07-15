@@ -37,6 +37,20 @@ export async function render(container) {
         const inputInitDataMaxAge = el('input', { type: 'number', value: settings.telegramInitDataMaxAgeSeconds, disabled: !hasPermission('Admin.ManageSettings') });
         const inputDataRetention = el('input', { type: 'number', value: settings.deletedDataRetentionDays, disabled: !hasPermission('Admin.ManageSettings') });
         const inputBotToken = el('input', { type: 'password', value: settings.botToken || '', placeholder: '请输入 Telegram Bot Token', disabled: !hasPermission('Admin.ManageSettings') });
+        const inputStaticVersion = el('input', { type: 'text', value: settings.staticVersion || '1.0.0', placeholder: '请输入静态资源版本号，如 1.0.1', disabled: !hasPermission('Admin.ManageSettings') });
+        const btnGenVersion = el('button', { className: 'btn btn-secondary', style: { marginLeft: '10px' }, disabled: !hasPermission('Admin.ManageSettings') }, '设为当前时间戳');
+        
+        btnGenVersion.addEventListener('click', (e) => {
+            e.preventDefault();
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            const hour = String(now.getHours()).padStart(2, '0');
+            const minute = String(now.getMinutes()).padStart(2, '0');
+            const second = String(now.getSeconds()).padStart(2, '0');
+            inputStaticVersion.value = `${year}${month}${day}-${hour}${minute}${second}`;
+        });
  
         const card = el('div', { className: 'card change-pw-container' },
             el('div', { className: 'form-group' },
@@ -74,6 +88,11 @@ export async function render(container) {
             el('div', { className: 'form-group' },
                 el('label', {}, 'Telegram Bot Token (BOT_TOKEN):'),
                 inputBotToken
+            ),
+            el('div', { className: 'form-group' },
+                el('label', {}, '前端资源版本号 (用于强制更新缓存):'),
+                inputStaticVersion,
+                btnGenVersion
             )
         );
  
@@ -91,7 +110,8 @@ export async function render(container) {
                         telegramInitDataMaxAgeSeconds: parseInt(inputInitDataMaxAge.value),
                         deletedDataRetentionDays: parseInt(inputDataRetention.value),
                         requireMfaForSuperAdmin: settings.requireMfaForSuperAdmin,
-                        botToken: inputBotToken.value
+                        botToken: inputBotToken.value,
+                        staticVersion: inputStaticVersion.value
                     };
 
                     if (Object.values(payload).some(v => typeof v === 'number' && isNaN(v))) {

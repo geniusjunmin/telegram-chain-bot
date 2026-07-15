@@ -15,6 +15,7 @@ public sealed class SystemSetting
     public int DeletedDataRetentionDays { get; set; } = 30;
     public bool RequireMfaForSuperAdmin { get; set; } = false;
     public string? BotToken { get; set; }
+    public string StaticVersion { get; set; } = "1.0.0";
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
     public int? UpdatedByAdminId { get; set; }
 }
