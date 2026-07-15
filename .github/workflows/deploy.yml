@@ -22,6 +22,12 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
             set -e
+            if [ ! -d "/opt/telegram-chain-bot/.git" ]; then
+                echo "Repository not found at /opt/telegram-chain-bot. Initializing..."
+                mkdir -p /opt/telegram-chain-bot
+                rm -rf /opt/telegram-chain-bot/* /opt/telegram-chain-bot/.* 2>/dev/null || true
+                git clone https://github.com/geniusjunmin/telegram-chain-bot.git /opt/telegram-chain-bot
+            fi
             cd /opt/telegram-chain-bot
             git fetch origin
             git reset --hard origin/main
