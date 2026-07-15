@@ -114,7 +114,7 @@ public class DatabaseBootstrapperTests : IDisposable
             var admin = await db.AdminAccounts.FirstOrDefaultAsync(a => a.Username == "legacy_admin");
             Assert.NotNull(admin);
             Assert.Equal("LEGACY_SHA256_HASH_VAL", admin.PasswordHash);
-            Assert.Equal(AdminRole.AuditorAdmin, admin.Role);
+            Assert.Equal(AdminRole.RootAdmin, admin.Role);
             Assert.True(admin.IsActive);
 
             var chat1 = await db.ManagedChats.FindAsync(3333L);
@@ -166,7 +166,7 @@ public class DatabaseBootstrapperTests : IDisposable
         await using (var db = new AppDbContext(options))
         {
             var bootstrapper = new DatabaseBootstrapper(db, NullLogger<DatabaseBootstrapper>.Instance);
-            
+
             await bootstrapper.BootstrapAsync();
             await bootstrapper.BootstrapAsync();
         }

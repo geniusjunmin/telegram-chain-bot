@@ -10,11 +10,12 @@ namespace TelegramChainBot.Services;
 
 public sealed class AdminService(
     AppDbContext db,
-    IPasswordHasher<AdminAccount> passwordHasher)
+    IPasswordHasher<AdminAccount> passwordHasher,
+    AdminPasswordPolicy passwordPolicy)
 {
     public async Task<AdminAccount?> LoginAsync(string username, string password, CancellationToken ct)
     {
-        var admin = await db.AdminAccounts.FirstOrDefaultAsync(a => a.Username == username, ct);
+        var admin = await db.AdminAccounts.FirstOrDefaultAsync(a => a.NormalizedUsername == username.ToUpperInvariant(), ct);
         if (admin == null || !admin.IsActive)
         {
             return null;
@@ -108,6 +109,11 @@ public sealed class AdminService(
             return false;
         }
 
+        if (!passwordPolicy.Validate(newPassword, admin.Username, oldPassword, out _))
+        {
+            return false;
+        }
+
         admin.PasswordHash = passwordHasher.HashPassword(admin, newPassword);
         admin.SecurityStamp = Guid.NewGuid().ToString("N");
         admin.PasswordChangedAt = DateTimeOffset.UtcNow;
@@ -119,10 +125,15 @@ public sealed class AdminService(
 
     public async Task EnsureDefaultAdminAsync(CancellationToken ct)
     {
-        if (await db.AdminAccounts.AnyAsync(ct))
+        // 1. Check if there exists at least one active RootAdmin in the database
+        if (await db.AdminAccounts.AnyAsync(a => a.IsActive && a.Role == AdminRole.RootAdmin, ct))
         {
             return;
         }
+
+        // 2. Fetch the initial admin config parameters
+        var usernameEnv = Environment.GetEnvironmentVariable("INITIAL_ADMIN_USERNAME");
+        var username = string.IsNullOrWhiteSpace(usernameEnv) ? "admin" : usernameEnv.Trim();
 
         string? password = null;
         var passwordFile = Environment.GetEnvironmentVariable("INITIAL_ADMIN_PASSWORD_FILE");
@@ -144,43 +155,51 @@ public sealed class AdminService(
             }
         }
 
+        // 3. If there is no active RootAdmin in the DB, and no configuration parameters were found, abort startup with error.
         if (string.IsNullOrWhiteSpace(password))
         {
-            throw new InvalidOperationException("No initial admin password was configured. Root account bootstrapping failed.");
+            throw new InvalidOperationException("No active RootAdmin exists in the database and no valid initial admin password was configured. Application startup halted.");
         }
 
-        if (password.Length < 12)
+        // 4. Validate password against unified password policy
+        if (!passwordPolicy.Validate(password, username, null, out var policyError))
         {
-            throw new InvalidOperationException("Bootstrap password is too short. It must be at least 12 characters.");
+            throw new InvalidOperationException($"Bootstrap initial password policy validation failed: {policyError}");
         }
 
-        if (IsWeakPassword(password))
+        // 5. Check if user already exists
+        var normalized = username.ToUpperInvariant();
+        var admin = await db.AdminAccounts.FirstOrDefaultAsync(a => a.NormalizedUsername == normalized, ct);
+        if (admin != null)
         {
-            throw new InvalidOperationException("Bootstrap password is too simple.");
+            // If they exist but are not active RootAdmin, upgrade them to active RootAdmin and reset password
+            admin.Role = AdminRole.RootAdmin;
+            admin.IsActive = true;
+            admin.MustChangePassword = true;
+            admin.SecurityStamp = Guid.NewGuid().ToString("N");
+            admin.PasswordHash = passwordHasher.HashPassword(admin, password);
+            admin.UpdatedAt = DateTimeOffset.UtcNow;
+        }
+        else
+        {
+            // Create a completely new root admin account
+            admin = new AdminAccount
+            {
+                Username = username,
+                NormalizedUsername = normalized,
+                Role = AdminRole.RootAdmin,
+                IsActive = true,
+                MustChangePassword = true,
+                SecurityStamp = Guid.NewGuid().ToString("N"),
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow,
+                PasswordHash = string.Empty
+            };
+            admin.PasswordHash = passwordHasher.HashPassword(admin, password);
+            db.AdminAccounts.Add(admin);
         }
 
-        var defaultAdmin = new AdminAccount
-        {
-            Username = "admin",
-            NormalizedUsername = "ADMIN",
-            Role = AdminRole.RootAdmin,
-            IsActive = true,
-            MustChangePassword = true,
-            SecurityStamp = Guid.NewGuid().ToString("N"),
-            CreatedAt = DateTimeOffset.UtcNow,
-            UpdatedAt = DateTimeOffset.UtcNow
-        };
-        defaultAdmin.PasswordHash = passwordHasher.HashPassword(defaultAdmin, password);
-        
-        db.AdminAccounts.Add(defaultAdmin);
         await db.SaveChangesAsync(ct);
-    }
-
-    private static bool IsWeakPassword(string password)
-    {
-        if (password.All(char.IsDigit) || password.All(char.IsLetter)) return true;
-        if (password.Distinct().Count() < 4) return true;
-        return false;
     }
 
     private static bool IsLegacySha256Hash(string hash)

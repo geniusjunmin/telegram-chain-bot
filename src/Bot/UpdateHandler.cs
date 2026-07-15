@@ -16,11 +16,12 @@ using TelegramChainBot.Services;
 namespace TelegramChainBot.Bot;
 
 public sealed class UpdateHandler(
-    ChainService chainService, 
-    TelegramService telegramService, 
+    ChainService chainService,
+    TelegramService telegramService,
     AppDbContext db,
     GroupAdminValidator adminValidator,
     IConfiguration configuration,
+    ManagedChatAuthorizationService authService,
     ILogger<UpdateHandler> logger)
 {
     public async Task HandleAsync(Update update, CancellationToken cancellationToken)
@@ -35,7 +36,7 @@ public sealed class UpdateHandler(
 
         if (update.Type == UpdateType.CallbackQuery && update.CallbackQuery is not null)
         {
-            logger.LogInformation("Handling CallbackQuery from User: {UserId}, Data: {Data}", 
+            logger.LogInformation("Handling CallbackQuery from User: {UserId}, Data: {Data}",
                 update.CallbackQuery.From.Id.ToString(), update.CallbackQuery.Data);
             await HandleCallbackAsync(update.CallbackQuery, cancellationToken);
         }
@@ -49,72 +50,29 @@ public sealed class UpdateHandler(
         var chatType = message.Chat.Type;
         if (chatType == ChatType.Group || chatType == ChatType.Supergroup)
         {
-            var modeStr = configuration["GLOBAL_WHITELIST_MODE"] ?? "Enforced";
-            if (!Enum.TryParse<WhitelistMode>(modeStr, true, out var mode))
-            {
-                mode = WhitelistMode.Enforced;
-            }
-
-            if (mode != WhitelistMode.Disabled)
+            var title = message.Chat.Title ?? "Unknown Group";
+            var chatTypeStr = chatType == ChatType.Supergroup ? "supergroup" : "group";
+            var authorized = await authService.IsChatAuthorizedAsync(message.Chat.Id, title, chatTypeStr, cancellationToken);
+            if (!authorized)
             {
                 var managed = await db.ManagedChats.FindAsync([message.Chat.Id], cancellationToken);
-                
-                if (mode == WhitelistMode.Audit)
+                if (managed != null && managed.AuthorizationStatus == AuthorizationStatus.Blocked)
                 {
-                    if (managed == null)
+                    logger.LogWarning("Group {ChatId} is Blocked. Leaving group.", message.Chat.Id);
+                    try
                     {
-                        managed = new ManagedChat
-                        {
-                            ChatId = message.Chat.Id,
-                            Title = message.Chat.Title ?? "Unknown Group",
-                            ChatType = chatType == ChatType.Supergroup ? "supergroup" : "group",
-                            AuthorizationStatus = AuthorizationStatus.Pending,
-                            CreatedAt = DateTimeOffset.UtcNow,
-                            UpdatedAt = DateTimeOffset.UtcNow
-                        };
-                        db.ManagedChats.Add(managed);
-                        await db.SaveChangesAsync(cancellationToken);
-                        
-                        logger.LogInformation("Group {ChatId} ({Title}) registered as Pending under Audit mode.", message.Chat.Id, managed.Title);
+                        await telegramService.LeaveChatAsync(message.Chat.Id, cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "Failed to leave blocked group {ChatId}.", message.Chat.Id);
                     }
                 }
-                else if (mode == WhitelistMode.Enforced)
+                else
                 {
-                    if (managed == null || managed.AuthorizationStatus == AuthorizationStatus.Pending)
-                    {
-                        if (managed == null)
-                        {
-                            managed = new ManagedChat
-                            {
-                                ChatId = message.Chat.Id,
-                                Title = message.Chat.Title ?? "Unknown Group",
-                                ChatType = chatType == ChatType.Supergroup ? "supergroup" : "group",
-                                AuthorizationStatus = AuthorizationStatus.Pending,
-                                CreatedAt = DateTimeOffset.UtcNow,
-                                UpdatedAt = DateTimeOffset.UtcNow
-                            };
-                            db.ManagedChats.Add(managed);
-                            await db.SaveChangesAsync(cancellationToken);
-                        }
-                        
-                        await telegramService.SendTextMessageAsync(message.Chat.Id, "该群聊尚未获得授权，请联系管理员。", cancellationToken);
-                        return;
-                    }
-
-                    if (managed.AuthorizationStatus == AuthorizationStatus.Blocked)
-                    {
-                        logger.LogWarning("Group {ChatId} is Blocked. Leaving group.", message.Chat.Id);
-                        try
-                        {
-                            await telegramService.LeaveChatAsync(message.Chat.Id, cancellationToken);
-                        }
-                        catch (Exception ex)
-                        {
-                            logger.LogError(ex, "Failed to leave blocked group {ChatId}.", message.Chat.Id);
-                        }
-                        return;
-                    }
+                    await telegramService.SendTextMessageAsync(message.Chat.Id, "该群聊尚未获得授权，请联系管理员。", cancellationToken);
                 }
+                return;
             }
         }
 
@@ -195,7 +153,7 @@ public sealed class UpdateHandler(
         if (commandEntity is null) return false;
 
         var commandText = text.Substring(commandEntity.Offset, commandEntity.Length);
-        
+
         var atIndex = commandText.IndexOf('@');
         var baseCommand = atIndex >= 0 ? commandText[..atIndex] : commandText;
 
@@ -394,11 +352,31 @@ public sealed class UpdateHandler(
 
     private async Task CreateChainAsync(Message message, string title, CancellationToken cancellationToken)
     {
-        var managed = await db.ManagedChats.FindAsync([message.Chat.Id], cancellationToken);
-        if (managed == null || managed.AuthorizationStatus != AuthorizationStatus.Approved)
+        var chatTitle = message.Chat.Title ?? "Unknown Group";
+        var chatTypeStr = message.Chat.Type == ChatType.Supergroup ? "supergroup" : "group";
+        var authorized = await authService.IsChatAuthorizedAsync(message.Chat.Id, chatTitle, chatTypeStr, cancellationToken);
+        if (!authorized)
         {
             await telegramService.SendTextMessageAsync(message.Chat.Id, "该群聊尚未获得授权，请联系管理员。", cancellationToken);
             return;
+        }
+
+        var managed = await db.ManagedChats.FindAsync([message.Chat.Id], cancellationToken);
+        if (managed == null)
+        {
+            var settings = await db.SystemSettings.FirstOrDefaultAsync(cancellationToken);
+            var defaultPolicy = settings?.DefaultCreatePolicy ?? CreatePolicy.Everyone;
+            managed = new ManagedChat
+            {
+                ChatId = message.Chat.Id,
+                Title = chatTitle,
+                ChatType = chatTypeStr,
+                AuthorizationStatus = AuthorizationStatus.Approved,
+                CreatePolicy = defaultPolicy,
+                MaxActiveChains = 5,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
         }
 
         var creatorId = message.From?.Id ?? 0;
@@ -488,9 +466,7 @@ public sealed class UpdateHandler(
         chain.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
 
-        var members = await chainService.GetMembersAsync(chain.Id, cancellationToken);
-        var messageText = ChainService.FormatChainMessage(chain.Title, members) + "\n\n⚠️ 接龙已关闭。";
-        await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId.GetValueOrDefault(), chain.PublicId, messageText, cancellationToken);
+        await telegramService.SyncChainMessageAsync(chain.Id, cancellationToken);
         await telegramService.SendTextMessageAsync(message.Chat.Id, $"接龙 \"{chain.Title}\" 已成功关闭。", cancellationToken);
     }
 
@@ -515,8 +491,7 @@ public sealed class UpdateHandler(
 
         if (removed)
         {
-            var messageText = ChainService.FormatChainMessage(chain.Title, members);
-            await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId.GetValueOrDefault(), chain.PublicId, messageText, cancellationToken);
+            await telegramService.SyncChainMessageAsync(chain.Id, cancellationToken);
             await telegramService.SendTextMessageAsync(message.Chat.Id, "你已成功退出接龙。", cancellationToken);
         }
         else
@@ -671,7 +646,7 @@ public sealed class UpdateHandler(
 
     private async Task HandleCallbackAsync(CallbackQuery callback, CancellationToken cancellationToken)
     {
-        try 
+        try
         {
             if (string.IsNullOrWhiteSpace(callback.Data))
             {
@@ -694,8 +669,10 @@ public sealed class UpdateHandler(
                 var chatType = callback.Message.Chat.Type;
                 if (chatType == ChatType.Group || chatType == ChatType.Supergroup)
                 {
-                    var managed = await db.ManagedChats.FindAsync([callback.Message.Chat.Id], cancellationToken);
-                    if (managed == null || managed.AuthorizationStatus != AuthorizationStatus.Approved)
+                    var chatTitle = callback.Message.Chat.Title ?? "Unknown Group";
+                    var chatTypeStr = chatType == ChatType.Supergroup ? "supergroup" : "group";
+                    var authorized = await authService.IsChatAuthorizedAsync(callback.Message.Chat.Id, chatTitle, chatTypeStr, cancellationToken);
+                    if (!authorized)
                     {
                         await telegramService.AnswerCallbackAsync(callback.Id, "群聊未授权使用此 Bot", cancellationToken);
                         return;
@@ -725,13 +702,12 @@ public sealed class UpdateHandler(
                     await telegramService.AnswerCallbackAsync(callback.Id, error, cancellationToken);
                     return;
                 }
-                
+
                 await telegramService.AnswerCallbackAsync(callback.Id, added ? "加入成功" : "你已经参加过了", cancellationToken);
 
                 if (added)
                 {
-                    var messageText = ChainService.FormatChainMessage(chain.Title, members);
-                    await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId.GetValueOrDefault(), chain.PublicId, messageText, cancellationToken);
+                    await telegramService.SyncChainMessageAsync(chain.Id, cancellationToken);
                 }
             }
             else if (action == "leave")
@@ -747,8 +723,7 @@ public sealed class UpdateHandler(
 
                 if (removed)
                 {
-                    var messageText = ChainService.FormatChainMessage(chain.Title, members);
-                    await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId.GetValueOrDefault(), chain.PublicId, messageText, cancellationToken);
+                    await telegramService.SyncChainMessageAsync(chain.Id, cancellationToken);
                 }
             }
             else if (action == "close")
@@ -774,16 +749,14 @@ public sealed class UpdateHandler(
                 chain.UpdatedAt = DateTimeOffset.UtcNow;
                 await db.SaveChangesAsync(cancellationToken);
 
-                var members = await chainService.GetMembersAsync(chain.Id, cancellationToken);
-                var messageText = ChainService.FormatChainMessage(chain.Title, members) + "\n\n⚠️ 接龙已关闭。";
-                await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId.GetValueOrDefault(), chain.PublicId, messageText, cancellationToken);
+                await telegramService.SyncChainMessageAsync(chain.Id, cancellationToken);
                 await telegramService.AnswerCallbackAsync(callback.Id, "接龙已关闭", cancellationToken);
             }
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to handle callback query.");
-            try { await telegramService.AnswerCallbackAsync(callback.Id, "出错了，请稍后再试", cancellationToken); } catch {}
+            try { await telegramService.AnswerCallbackAsync(callback.Id, "出错了，请稍后再试", cancellationToken); } catch { }
         }
     }
 }

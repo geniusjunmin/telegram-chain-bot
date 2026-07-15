@@ -10,7 +10,7 @@ using TelegramChainBot.Database;
 
 namespace TelegramChainBot.Services;
 
-public sealed class DatabaseBackupService(IConfiguration configuration, ILogger<DatabaseBackupService> logger) : BackgroundService
+public sealed class DatabaseBackupService(IConfiguration configuration, BackgroundWorkerTracker tracker, ILogger<DatabaseBackupService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -20,6 +20,7 @@ public sealed class DatabaseBackupService(IConfiguration configuration, ILogger<
         {
             try
             {
+                tracker.LastBackupCheck = DateTimeOffset.UtcNow;
                 await PerformScheduledBackupsAsync(stoppingToken);
             }
             catch (Exception ex)
@@ -71,7 +72,7 @@ public sealed class DatabaseBackupService(IConfiguration configuration, ILogger<
             {
                 SqliteBackupHelper.Backup(connectionString, dailyBackupPath, logger);
                 logger.LogInformation("Daily backup created successfully.");
-                
+
                 CleanupOldBackups(backupDir, "chain_daily_*.db", 7);
             }
             catch (Exception ex)

@@ -15,9 +15,9 @@ namespace TelegramChainBot.Migrations
         {
             // 1. Upgrade admins to admin_accounts
             migrationBuilder.RenameTable(name: "admins", newName: "admin_accounts");
-            
+
             migrationBuilder.AddColumn<string>(name: "NormalizedUsername", table: "admin_accounts", maxLength: 64, nullable: false, defaultValue: "");
-            migrationBuilder.AddColumn<int>(name: "Role", table: "admin_accounts", nullable: false, defaultValue: 3);
+            migrationBuilder.AddColumn<int>(name: "Role", table: "admin_accounts", nullable: false, defaultValue: 2);
             migrationBuilder.AddColumn<bool>(name: "IsActive", table: "admin_accounts", nullable: false, defaultValue: true);
             migrationBuilder.AddColumn<bool>(name: "MustChangePassword", table: "admin_accounts", nullable: false, defaultValue: false);
             migrationBuilder.AddColumn<int>(name: "AccessFailedCount", table: "admin_accounts", nullable: false, defaultValue: 0);
@@ -30,7 +30,8 @@ namespace TelegramChainBot.Migrations
 
             // Populate CreatedAt/UpdatedAt/SecurityStamp/NormalizedUsername for old admins
             migrationBuilder.Sql("UPDATE admin_accounts SET NormalizedUsername = upper(Username), CreatedAt = datetime('now'), UpdatedAt = datetime('now'), SecurityStamp = lower(hex(randomblob(16)));");
-            
+            migrationBuilder.Sql("UPDATE admin_accounts SET Role = 1 WHERE Id = (SELECT Id FROM admin_accounts ORDER BY CASE WHEN upper(Username) = 'ADMIN' THEN 0 ELSE 1 END, Id ASC LIMIT 1);");
+
             migrationBuilder.CreateIndex(
                 name: "IX_admin_accounts_NormalizedUsername",
                 table: "admin_accounts",
@@ -226,7 +227,7 @@ namespace TelegramChainBot.Migrations
 
             // Rename admin_accounts back to admins and drop columns
             migrationBuilder.RenameTable(name: "admin_accounts", newName: "admins");
-            
+
             // Drop columns from admins by rebuilding it
             migrationBuilder.Sql(
                 "CREATE TABLE admins_old (" +

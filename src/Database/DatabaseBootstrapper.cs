@@ -107,7 +107,7 @@ public sealed class DatabaseBootstrapper(
             var backupDir = Path.Combine(Path.GetDirectoryName(dbPath) ?? ".", "backups");
             var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss");
             var backupPath = Path.Combine(backupDir, $"pre-takeover-{timestamp}.db");
-            
+
             SqliteBackupHelper.Backup(connectionString!, backupPath, logger);
             logger.LogInformation("Successfully backed up legacy database to {BackupPath}.", backupPath);
         }

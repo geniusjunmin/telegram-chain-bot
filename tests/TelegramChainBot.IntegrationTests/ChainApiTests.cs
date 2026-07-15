@@ -56,11 +56,32 @@ public class ChainApiTests : IClassFixture<CustomWebApplicationFactory>
         // 1. Create a chain in the DB
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var existingChat = await db.ManagedChats.FindAsync(0L);
+        if (existingChat != null)
+        {
+            existingChat.AuthorizationStatus = AuthorizationStatus.Approved;
+        }
+        else
+        {
+            var chat = new ManagedChat
+            {
+                ChatId = 0,
+                Title = "Test Group",
+                ChatType = "group",
+                AuthorizationStatus = AuthorizationStatus.Approved,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
+            db.ManagedChats.Add(chat);
+        }
+
         var chain = new Chain
         {
             PublicId = Guid.NewGuid().ToString("N"),
             Title = "Dinner Join Test",
             CreatorTelegramUserId = 12345,
+            ChatId = 0,
             CreatedAt = DateTimeOffset.UtcNow
         };
         db.Chains.Add(chain);
@@ -73,7 +94,7 @@ public class ChainApiTests : IClassFixture<CustomWebApplicationFactory>
         var initData = GenerateValidInitData(botToken, userJson, authDate);
 
         var requestBody = new ChainController.JoinRequest("Alice");
-        
+
         var request = new HttpRequestMessage(HttpMethod.Post, $"/api/chains/{chain.PublicId}/join")
         {
             Content = JsonContent.Create(requestBody)
@@ -120,7 +141,7 @@ public class ChainApiTests : IClassFixture<CustomWebApplicationFactory>
         var initData = GenerateValidInitData(botToken, userJson, authDate);
 
         var requestBody = new ChainController.JoinRequest("Alice");
-        
+
         var request = new HttpRequestMessage(HttpMethod.Post, $"/api/chains/{chain.PublicId}/join")
         {
             Content = JsonContent.Create(requestBody)
@@ -199,11 +220,32 @@ public class ChainApiTests : IClassFixture<CustomWebApplicationFactory>
 
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var existingChat = await db.ManagedChats.FindAsync(0L);
+        if (existingChat != null)
+        {
+            existingChat.AuthorizationStatus = AuthorizationStatus.Approved;
+        }
+        else
+        {
+            var chat = new ManagedChat
+            {
+                ChatId = 0,
+                Title = "XSS Test Group",
+                ChatType = "group",
+                AuthorizationStatus = AuthorizationStatus.Approved,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
+            db.ManagedChats.Add(chat);
+        }
+
         var chain = new Chain
         {
             PublicId = Guid.NewGuid().ToString("N"),
             Title = "XSS Test Chain",
             CreatorTelegramUserId = 22222,
+            ChatId = 0,
             CreatedAt = DateTimeOffset.UtcNow
         };
         db.Chains.Add(chain);
@@ -216,7 +258,7 @@ public class ChainApiTests : IClassFixture<CustomWebApplicationFactory>
 
         var xssPayload = "<script>alert('XSS')</script>";
         var requestBody = new ChainController.JoinRequest(xssPayload);
-        
+
         var request = new HttpRequestMessage(HttpMethod.Post, $"/api/chains/{chain.PublicId}/join")
         {
             Content = JsonContent.Create(requestBody)
@@ -245,9 +287,9 @@ public class ChainApiTests : IClassFixture<CustomWebApplicationFactory>
 
         // Assert
         Assert.True(response.Headers.Contains("Content-Security-Policy"));
-        Assert.Equal("default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';", 
+        Assert.Equal("default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';",
             response.Headers.GetValues("Content-Security-Policy").First());
-        
+
         Assert.True(response.Headers.Contains("X-Content-Type-Options"));
         Assert.Equal("nosniff", response.Headers.GetValues("X-Content-Type-Options").First());
 
@@ -308,7 +350,7 @@ public class ChainApiTests : IClassFixture<CustomWebApplicationFactory>
         var xsrfToken1 = GetXsrfToken(csrfResponse1);
 
         // 2. Login
-        var loginReq = new AdminController.LoginRequest("admin", "SuperSecurePassword123!");
+        var loginReq = new AdminController.LoginRequest("admin", "SuperSecureAcc123!");
         var loginMsg = new HttpRequestMessage(HttpMethod.Post, "/api/admin/login")
         {
             Content = JsonContent.Create(loginReq)
@@ -326,7 +368,7 @@ public class ChainApiTests : IClassFixture<CustomWebApplicationFactory>
         var xsrfToken2 = GetXsrfToken(csrfResponse2);
 
         // 4. Change password
-        var changePwdReq = new AdminController.ChangePasswordRequest("SuperSecurePassword123!", "NewSuperSecurePassword123!");
+        var changePwdReq = new AdminController.ChangePasswordRequest("SuperSecureAcc123!", "NewSuperSecureAcc123!");
         var changePwdMsg = new HttpRequestMessage(HttpMethod.Post, "/api/admin/change-password")
         {
             Content = JsonContent.Create(changePwdReq)
@@ -345,7 +387,7 @@ public class ChainApiTests : IClassFixture<CustomWebApplicationFactory>
         var xsrfToken3 = GetXsrfToken(csrfResponse3);
 
         // 5. Login again with the NEW password
-        var loginReq2 = new AdminController.LoginRequest("admin", "NewSuperSecurePassword123!");
+        var loginReq2 = new AdminController.LoginRequest("admin", "NewSuperSecureAcc123!");
         var loginMsg2 = new HttpRequestMessage(HttpMethod.Post, "/api/admin/login")
         {
             Content = JsonContent.Create(loginReq2)
@@ -448,5 +490,127 @@ public class ChainApiTests : IClassFixture<CustomWebApplicationFactory>
         var res = await response.Content.ReadFromJsonAsync<System.Text.Json.Nodes.JsonObject>();
         Assert.Equal("Healthy", res?["status"]?.ToString());
         Assert.Equal("Connected", res?["database"]?.ToString());
+    }
+
+    [Fact]
+    public async Task FirstLogin_MustChangePassword_Flow()
+    {
+        // Isolate database state by inserting a specific admin account
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var hasher = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.Identity.IPasswordHasher<AdminAccount>>();
+
+            var existing = db.AdminAccounts.FirstOrDefault(a => a.Username == "firstloginadmin");
+            if (existing != null)
+            {
+                db.AdminAccounts.Remove(existing);
+                db.SaveChanges();
+            }
+
+            var account = new AdminAccount
+            {
+                Username = "firstloginadmin",
+                NormalizedUsername = "FIRSTLOGINADMIN",
+                Role = AdminRole.RootAdmin,
+                IsActive = true,
+                MustChangePassword = true,
+                PasswordHash = string.Empty,
+                SecurityStamp = Guid.NewGuid().ToString("N"),
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
+            account.PasswordHash = hasher.HashPassword(account, "SuperSecureAcc123!");
+            db.AdminAccounts.Add(account);
+            db.SaveChanges();
+        }
+
+        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://localhost"),
+            AllowAutoRedirect = false
+        });
+
+        // 1. Get initial CSRF token
+        var csrfResponse1 = await client.GetAsync("/api/admin/csrf");
+        Assert.Equal(HttpStatusCode.OK, csrfResponse1.StatusCode);
+        var xsrfToken1 = GetXsrfToken(csrfResponse1);
+
+        // 2. Login with initial admin password (which has MustChangePassword = true)
+        var loginReq = new AdminController.LoginRequest("firstloginadmin", "SuperSecureAcc123!");
+        var loginMsg = new HttpRequestMessage(HttpMethod.Post, "/api/admin/login")
+        {
+            Content = JsonContent.Create(loginReq)
+        };
+        if (xsrfToken1 != null)
+        {
+            loginMsg.Headers.Add("X-XSRF-TOKEN", xsrfToken1);
+        }
+        var loginResponse = await client.SendAsync(loginMsg);
+        var body = await loginResponse.Content.ReadAsStringAsync();
+        Assert.True(loginResponse.StatusCode == HttpStatusCode.OK, $"Login failed: {loginResponse.StatusCode}. Body: {body}");
+
+        // 3. auth/me is allowed and returns mustChangePassword = true
+        var meResponse = await client.GetAsync("/api/admin/auth/me");
+        Assert.Equal(HttpStatusCode.OK, meResponse.StatusCode);
+        var meObj = await meResponse.Content.ReadFromJsonAsync<System.Text.Json.Nodes.JsonObject>();
+        Assert.NotNull(meObj);
+        Assert.Equal("firstloginadmin", meObj["username"]?.ToString());
+        Assert.Equal("True", meObj["mustChangePassword"]?.ToString(), ignoreCase: true);
+
+        // 4. dashboard is blocked (403 Forbidden) because password has not been changed yet
+        var statsResponse = await client.GetAsync("/api/admin/dashboard-stats");
+        Assert.Equal(HttpStatusCode.Forbidden, statsResponse.StatusCode);
+
+        // 5. Get fresh post-login CSRF token
+        var csrfResponse2 = await client.GetAsync("/api/admin/csrf");
+        Assert.Equal(HttpStatusCode.OK, csrfResponse2.StatusCode);
+        var xsrfToken2 = GetXsrfToken(csrfResponse2);
+
+        // 6. Change password (change-password endpoint is allowed)
+        var changePwdReq = new AdminController.ChangePasswordRequest("SuperSecureAcc123!", "NewSuperSecureAcc123!");
+        var changePwdMsg = new HttpRequestMessage(HttpMethod.Post, "/api/admin/change-password")
+        {
+            Content = JsonContent.Create(changePwdReq)
+        };
+        if (xsrfToken2 != null)
+        {
+            changePwdMsg.Headers.Add("X-XSRF-TOKEN", xsrfToken2);
+        }
+        var changeResponse = await client.SendAsync(changePwdMsg);
+        Assert.Equal(HttpStatusCode.OK, changeResponse.StatusCode);
+
+        // 7. Try to call auth/me using the old session cookie -> must return 401 Unauthorized (because SecurityStamp changed and session got invalidated)
+        var meResponseAfterChange = await client.GetAsync("/api/admin/auth/me");
+        Assert.Equal(HttpStatusCode.Unauthorized, meResponseAfterChange.StatusCode);
+
+        // 8. Get fresh CSRF token for login
+        var csrfResponse3 = await client.GetAsync("/api/admin/csrf");
+        Assert.Equal(HttpStatusCode.OK, csrfResponse3.StatusCode);
+        var xsrfToken3 = GetXsrfToken(csrfResponse3);
+
+        // 9. Login again with the new password
+        var loginReq2 = new AdminController.LoginRequest("firstloginadmin", "NewSuperSecureAcc123!");
+        var loginMsg2 = new HttpRequestMessage(HttpMethod.Post, "/api/admin/login")
+        {
+            Content = JsonContent.Create(loginReq2)
+        };
+        if (xsrfToken3 != null)
+        {
+            loginMsg2.Headers.Add("X-XSRF-TOKEN", xsrfToken3);
+        }
+        var loginResponse2 = await client.SendAsync(loginMsg2);
+        Assert.Equal(HttpStatusCode.OK, loginResponse2.StatusCode);
+
+        // 10. auth/me is allowed and returns mustChangePassword = false
+        var meResponse2 = await client.GetAsync("/api/admin/auth/me");
+        Assert.Equal(HttpStatusCode.OK, meResponse2.StatusCode);
+        var meObj2 = await meResponse2.Content.ReadFromJsonAsync<System.Text.Json.Nodes.JsonObject>();
+        Assert.NotNull(meObj2);
+        Assert.Equal("False", meObj2["mustChangePassword"]?.ToString(), ignoreCase: true);
+
+        // 11. dashboard is now allowed (200 OK)
+        var statsResponse2 = await client.GetAsync("/api/admin/dashboard-stats");
+        Assert.Equal(HttpStatusCode.OK, statsResponse2.StatusCode);
     }
 }

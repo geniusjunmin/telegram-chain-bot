@@ -25,7 +25,7 @@ public class AuditLogService(AppDbContext db, IHttpContextAccessor httpContextAc
         long? actorTelegramUserId = null)
     {
         var context = httpContextAccessor.HttpContext;
-        
+
         string ipAddress = string.Empty;
         string userAgent = string.Empty;
         string correlationId = string.Empty;
@@ -36,7 +36,7 @@ public class AuditLogService(AppDbContext db, IHttpContextAccessor httpContextAc
             ipAddress = context.Connection.RemoteIpAddress?.ToString() ?? string.Empty;
             userAgent = context.Request.Headers.UserAgent.ToString();
             correlationId = context.TraceIdentifier;
-            
+
             if (actorAdminId == null && context.User.Identity?.IsAuthenticated == true)
             {
                 var nameIdClaim = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;

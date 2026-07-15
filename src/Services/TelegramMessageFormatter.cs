@@ -11,7 +11,7 @@ public static class TelegramMessageFormatter
     public static string FormatChainMessage(string title, IReadOnlyList<ChainMember> members)
     {
         var sb = new StringBuilder();
-        
+
         var encodedTitle = WebUtility.HtmlEncode(title);
         sb.AppendLine(encodedTitle);
         sb.AppendLine();

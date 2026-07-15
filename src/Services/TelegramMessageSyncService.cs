@@ -16,12 +16,10 @@ public sealed class TelegramMessageSyncService
     private readonly ConcurrentDictionary<string, RefCountedSemaphore> _locks = new();
 
     public async Task ExecuteLockedAsync(
-        long chatId, 
-        long messageId, 
-        Func<Task> action, 
+        string key,
+        Func<Task> action,
         CancellationToken cancellationToken = default)
     {
-        var key = $"{chatId}:{messageId}";
         RefCountedSemaphore refSemaphore;
 
         lock (_locks)
@@ -57,5 +55,14 @@ public sealed class TelegramMessageSyncService
                 }
             }
         }
+    }
+
+    public async Task ExecuteLockedAsync(
+        long chatId,
+        long messageId,
+        Func<Task> action,
+        CancellationToken cancellationToken = default)
+    {
+        await ExecuteLockedAsync($"{chatId}:{messageId}", action, cancellationToken);
     }
 }

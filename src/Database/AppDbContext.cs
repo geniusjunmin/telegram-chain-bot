@@ -9,6 +9,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<Chain> Chains => Set<Chain>();
     public DbSet<ChainMember> ChainMembers => Set<ChainMember>();
     public DbSet<AdminAccount> AdminAccounts => Set<AdminAccount>();
+    public DbSet<AdminSession> AdminSessions => Set<AdminSession>();
     public DbSet<ProcessedTelegramUpdate> ProcessedTelegramUpdates => Set<ProcessedTelegramUpdate>();
     public DbSet<ManagedChat> ManagedChats => Set<ManagedChat>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
@@ -126,6 +127,17 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.Property(x => x.DefaultCreatePolicy).HasConversion<int>().IsRequired();
             entity.Property(x => x.UnauthorizedChatBehavior).HasMaxLength(64).IsRequired();
             entity.Property(x => x.UpdatedAt).HasConversion(converter).IsRequired();
+        });
+
+        modelBuilder.Entity<AdminSession>(entity =>
+        {
+            entity.ToTable("admin_sessions");
+            entity.HasKey(x => x.SessionId);
+            entity.Property(x => x.SessionId).HasMaxLength(64);
+            entity.Property(x => x.AdminId).IsRequired();
+            entity.Property(x => x.CreatedAt).HasConversion(converter).IsRequired();
+            entity.Property(x => x.ExpiresAt).HasConversion(converter).IsRequired();
+            entity.Property(x => x.IsRevoked).IsRequired();
         });
     }
 }

@@ -24,10 +24,24 @@ builder.Configuration.AddEnvironmentVariables();
 
 builder.Services.Configure<BotOptions>(opts =>
 {
-    opts.BotToken = builder.Configuration["BOT_TOKEN"] ?? string.Empty;
+    var botToken = builder.Configuration["BOT_TOKEN"] ?? string.Empty;
+    var botTokenFile = builder.Configuration["BOT_TOKEN_FILE"];
+    if (string.IsNullOrWhiteSpace(botToken) && !string.IsNullOrWhiteSpace(botTokenFile) && System.IO.File.Exists(botTokenFile))
+    {
+        botToken = System.IO.File.ReadAllText(botTokenFile).Trim();
+    }
+    opts.BotToken = botToken;
+
     opts.WebhookBaseUrl = builder.Configuration["WEBHOOK_BASE_URL"];
     opts.WebhookPath = builder.Configuration["WEBHOOK_PATH"] ?? "/telegram/webhook";
-    opts.WebhookSecret = builder.Configuration["TELEGRAM_WEBHOOK_SECRET"];
+
+    var webhookSecret = builder.Configuration["TELEGRAM_WEBHOOK_SECRET"];
+    var webhookSecretFile = builder.Configuration["TELEGRAM_WEBHOOK_SECRET_FILE"];
+    if (string.IsNullOrWhiteSpace(webhookSecret) && !string.IsNullOrWhiteSpace(webhookSecretFile) && System.IO.File.Exists(webhookSecretFile))
+    {
+        webhookSecret = System.IO.File.ReadAllText(webhookSecretFile).Trim();
+    }
+    opts.WebhookSecret = webhookSecret;
 });
 
 builder.Services.AddDbContext<AppDbContext>(opts =>
@@ -47,11 +61,19 @@ builder.Services.AddDataProtection()
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
+        var cookieHoursEnv = Environment.GetEnvironmentVariable("ADMIN_COOKIE_HOURS");
+        if (!int.TryParse(cookieHoursEnv, out var cookieHours))
+        {
+            cookieHours = 8;
+        }
+        var expiry = TimeSpan.FromHours(cookieHours);
+
         options.Cookie.HttpOnly = true;
         options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
         options.Cookie.SameSite = SameSiteMode.Strict;
         options.Cookie.Name = "__Host-TelegramChain.Admin";
-        options.ExpireTimeSpan = TimeSpan.FromMinutes(30);
+        options.Cookie.Path = "/";
+        options.ExpireTimeSpan = expiry;
         options.SlidingExpiration = true;
         options.Events = new CookieAuthenticationEvents
         {
@@ -69,7 +91,7 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
             {
                 var sessionService = context.HttpContext.RequestServices.GetRequiredService<AdminSessionService>();
                 var sessionId = context.Principal?.FindFirst("SessionId")?.Value;
-                if (!sessionService.IsSessionActive(sessionId))
+                if (!await sessionService.IsSessionActiveAsync(sessionId, context.HttpContext.RequestAborted))
                 {
                     context.RejectPrincipal();
                     await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
@@ -80,10 +102,19 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
                 if (int.TryParse(adminIdClaim, out var adminId))
                 {
                     var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
-                    var admin = await db.AdminAccounts.FindAsync([adminId]);
-                    
+                    var admin = await db.AdminAccounts.FindAsync([adminId], context.HttpContext.RequestAborted);
+
                     var securityStamp = context.Principal?.FindFirst("SecurityStamp")?.Value;
-                    if (admin == null || !admin.IsActive || admin.SecurityStamp != securityStamp)
+                    var role = context.Principal?.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value;
+                    var username = context.Principal?.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value;
+                    var mustChangePassword = context.Principal?.FindFirst("MustChangePassword")?.Value;
+
+                    if (admin == null ||
+                        !admin.IsActive ||
+                        admin.SecurityStamp != securityStamp ||
+                        admin.Role.ToString() != role ||
+                        admin.Username != username ||
+                        admin.MustChangePassword.ToString() != mustChangePassword)
                     {
                         context.RejectPrincipal();
                         await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
@@ -138,19 +169,23 @@ builder.Services.AddSingleton<ITelegramBotClient>(sp =>
 
 builder.Services.AddScoped<ChainService>();
 builder.Services.AddScoped<TelegramService>();
+builder.Services.AddScoped<ManagedChatAuthorizationService>();
 builder.Services.AddScoped<TelegramInitDataValidator>();
 builder.Services.AddScoped<WebhookSecretValidator>();
 builder.Services.AddScoped<BotSecurityService>();
 builder.Services.AddScoped<UpdateHandler>();
 builder.Services.AddScoped<BotService>();
 builder.Services.AddScoped<AdminService>();
-builder.Services.AddSingleton<AdminSessionService>();
+builder.Services.AddSingleton<AdminPasswordPolicy>();
+builder.Services.AddScoped<AdminSessionService>();
 builder.Services.AddSingleton<TelegramMessageSyncService>();
 builder.Services.AddSingleton<GroupAdminValidator>();
 builder.Services.AddScoped<DatabaseBootstrapper>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<AuditLogService>();
+builder.Services.AddSingleton<BackgroundWorkerTracker>();
 builder.Services.AddHostedService<DatabaseBackupService>();
+builder.Services.AddHostedService<ChainExpirationService>();
 
 var app = builder.Build();
 
@@ -158,7 +193,7 @@ await using (var scope = app.Services.CreateAsyncScope())
 {
     var bootstrapper = scope.ServiceProvider.GetRequiredService<DatabaseBootstrapper>();
     await bootstrapper.BootstrapAsync(CancellationToken.None);
-    
+
     var adminService = scope.ServiceProvider.GetRequiredService<AdminService>();
     await adminService.EnsureDefaultAdminAsync(CancellationToken.None);
 
@@ -183,7 +218,7 @@ app.Use(async (context, next) =>
             Detail = app.Environment.IsDevelopment() ? ex.ToString() : null,
             Instance = context.Request.Path
         };
-        
+
         context.Response.ContentType = "application/problem+json; charset=utf-8";
         context.Response.StatusCode = StatusCodes.Status500InternalServerError;
         var json = JsonSerializer.Serialize(problem);
@@ -228,20 +263,64 @@ else
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 app.MapGet("/health/live", () => Results.Ok(new { status = "Healthy" }));
-app.MapGet("/health/ready", async (AppDbContext db, CancellationToken ct) =>
+app.MapGet("/health/ready", async (
+    AppDbContext db,
+    IConfiguration config,
+    BackgroundWorkerTracker tracker,
+    CancellationToken ct) =>
 {
     try
     {
+        // 1. Check database connection
         var canConnect = await db.Database.CanConnectAsync(ct);
-        if (canConnect)
+        if (!canConnect)
         {
-            return Results.Ok(new { status = "Healthy", database = "Connected" });
+            return Results.Json(new { status = "Unhealthy", error = "Cannot connect to database" }, statusCode: StatusCodes.Status503ServiceUnavailable);
         }
-        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+
+        // 2. Check pending migrations
+        var pendingMigrations = await db.Database.GetPendingMigrationsAsync(ct);
+        if (pendingMigrations.Any())
+        {
+            return Results.Json(new { status = "Unhealthy", error = "Database migrations are pending" }, statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
+        // 3. Check necessary configuration
+        var botToken = config["BOT_TOKEN"];
+        var webhookUrl = config["WEBHOOK_BASE_URL"];
+        var webhookSecret = config["TELEGRAM_WEBHOOK_SECRET"];
+        if (string.IsNullOrWhiteSpace(botToken) || string.IsNullOrWhiteSpace(webhookUrl) || string.IsNullOrWhiteSpace(webhookSecret))
+        {
+            return Results.Json(new { status = "Unhealthy", error = "Missing essential configuration variables" }, statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
+        // 4. Check Data Protection directory writability
+        var dataPath = config["DATA_PATH"] ?? "data";
+        var keysFolder = Path.Combine(dataPath, "dataprotection-keys");
+        try
+        {
+            Directory.CreateDirectory(keysFolder);
+            var testFile = Path.Combine(keysFolder, $".test_{Guid.NewGuid():N}");
+            await System.IO.File.WriteAllTextAsync(testFile, "test", ct);
+            System.IO.File.Delete(testFile);
+        }
+        catch (Exception ex)
+        {
+            return Results.Json(new { status = "Unhealthy", error = $"Data protection directory not writable: {ex.Message}" }, statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
+        // 5. Check background workers heartbeat
+        var now = DateTimeOffset.UtcNow;
+        if (now - tracker.LastExpirationCheck > TimeSpan.FromMinutes(2))
+        {
+            return Results.Json(new { status = "Unhealthy", error = "Expiration background worker heartbeat lost" }, statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
+        return Results.Ok(new { status = "Healthy", database = "Connected", migrations = "Applied", config = "Valid", storage = "Writable", workers = "Running" });
     }
-    catch
+    catch (Exception ex)
     {
-        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        return Results.Json(new { status = "Unhealthy", error = ex.Message }, statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 });
 
@@ -263,7 +342,7 @@ app.MapPost("/telegram/webhook", async (
         return Results.Unauthorized();
     }
 
-    try 
+    try
     {
         // Limit request size to 1MB (Telegram updates are usually small)
         if (context.Request.ContentLength > 1024 * 1024)
@@ -273,8 +352,8 @@ app.MapPost("/telegram/webhook", async (
 
         // 使用针对 Telegram.Bot v22 优化的 JsonBotAPI.Options
         var update = await JsonSerializer.DeserializeAsync<Update>(
-            context.Request.Body, 
-            JsonBotAPI.Options, 
+            context.Request.Body,
+            JsonBotAPI.Options,
             cancellationToken);
 
         if (update == null) return Results.BadRequest();
@@ -286,7 +365,7 @@ app.MapPost("/telegram/webhook", async (
         app.Logger.LogError(ex, "Failed to handle Telegram update");
         return Results.BadRequest();
     }
-    
+
     return Results.Ok();
 });
 

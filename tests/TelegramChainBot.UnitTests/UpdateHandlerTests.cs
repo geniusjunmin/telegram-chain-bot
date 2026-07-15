@@ -30,6 +30,7 @@ public class UpdateHandlerTests : IDisposable
     private readonly ChainService _chainServiceMock;
     private readonly GroupAdminValidator _adminValidator;
     private readonly IConfiguration _configuration;
+    private readonly ManagedChatAuthorizationService _authService;
 
     public UpdateHandlerTests()
     {
@@ -44,14 +45,15 @@ public class UpdateHandlerTests : IDisposable
         _db.Database.EnsureCreated();
 
         _botClientMock = Substitute.For<ITelegramBotClient>();
-        
+
         var syncService = new TelegramMessageSyncService();
         var optionsMock = Microsoft.Extensions.Options.Options.Create(new TelegramChainBot.Options.BotOptions
         {
             BotToken = "12345:mock_token",
             WebhookBaseUrl = "https://mock.url"
         });
-        _telegramServiceMock = Substitute.For<TelegramService>(_botClientMock, optionsMock, syncService, NullLogger<TelegramService>.Instance);
+        var serviceProviderMock = Substitute.For<IServiceProvider>();
+        _telegramServiceMock = Substitute.For<TelegramService>(_botClientMock, optionsMock, syncService, serviceProviderMock, NullLogger<TelegramService>.Instance);
         _chainServiceMock = Substitute.For<ChainService>(_db);
 
         _adminValidator = new GroupAdminValidator(_botClientMock);
@@ -63,6 +65,8 @@ public class UpdateHandlerTests : IDisposable
                 ["GLOBAL_WHITELIST_MODE"] = "Enforced"
             })
             .Build();
+
+        _authService = new ManagedChatAuthorizationService(_db, _configuration, NullLogger<ManagedChatAuthorizationService>.Instance);
     }
 
     public void Dispose()
@@ -125,6 +129,7 @@ public class UpdateHandlerTests : IDisposable
             _db,
             _adminValidator,
             _configuration,
+            _authService,
             NullLogger<UpdateHandler>.Instance);
 
         // Pre-register group as Blocked
@@ -151,7 +156,7 @@ public class UpdateHandlerTests : IDisposable
 
         // Assert
         await _telegramServiceMock.Received(1).LeaveChatAsync(-100123456, Arg.Any<CancellationToken>());
-        
+
         var managed = await _db.ManagedChats.FindAsync(-100123456L);
         Assert.NotNull(managed);
         Assert.Equal(AuthorizationStatus.Blocked, managed.AuthorizationStatus);
@@ -167,6 +172,7 @@ public class UpdateHandlerTests : IDisposable
             _db,
             _adminValidator,
             _configuration,
+            _authService,
             NullLogger<UpdateHandler>.Instance);
 
         // Pre-register group as Pending
@@ -206,6 +212,7 @@ public class UpdateHandlerTests : IDisposable
             _db,
             _adminValidator,
             _configuration,
+            _authService,
             NullLogger<UpdateHandler>.Instance);
 
         var mockMsg = CreateMockMessage(99999, ChatType.Private, "/whitelist_add -100888888 Approved", 99999, "owner_username", "Owner");
@@ -224,8 +231,8 @@ public class UpdateHandlerTests : IDisposable
         Assert.Equal(AuthorizationStatus.Approved, managed.AuthorizationStatus);
 
         await _telegramServiceMock.Received(1).SendTextMessageAsync(
-            99999, 
-            Arg.Is<string>(s => s.Contains("成功添加/更新白名单")), 
+            99999,
+            Arg.Is<string>(s => s.Contains("成功添加/更新白名单")),
             Arg.Any<CancellationToken>());
     }
 
@@ -239,6 +246,7 @@ public class UpdateHandlerTests : IDisposable
             _db,
             _adminValidator,
             _configuration,
+            _authService,
             NullLogger<UpdateHandler>.Instance);
 
         var mockMsg = CreateMockMessage(11111, ChatType.Private, "/whitelist_add -100888888 Approved", 11111, "alice", "Alice");
@@ -268,6 +276,7 @@ public class UpdateHandlerTests : IDisposable
             _db,
             _adminValidator,
             _configuration,
+            _authService,
             NullLogger<UpdateHandler>.Instance);
 
         var chatId = -100777777L;
@@ -317,6 +326,7 @@ public class UpdateHandlerTests : IDisposable
             _db,
             _adminValidator,
             _configuration,
+            _authService,
             NullLogger<UpdateHandler>.Instance);
 
         var chatId = -100777778L;
@@ -351,5 +361,97 @@ public class UpdateHandlerTests : IDisposable
             chatId,
             Arg.Is<string>(s => s.Contains("只有群管理员才能发起接龙")),
             Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task HandleAsync_AllowsEverything_WhenWhitelistModeIsDisabled()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["BOT_OWNER_IDS"] = "99999",
+                ["GLOBAL_WHITELIST_MODE"] = "Disabled"
+            })
+            .Build();
+        var authService = new ManagedChatAuthorizationService(_db, config, NullLogger<ManagedChatAuthorizationService>.Instance);
+        var handler = new UpdateHandler(
+            _chainServiceMock,
+            _telegramServiceMock,
+            _db,
+            _adminValidator,
+            config,
+            authService,
+            NullLogger<UpdateHandler>.Instance);
+
+        var dummyChain = new Chain
+        {
+            Id = 1,
+            PublicId = "mock_public_id",
+            Title = "Pizza Dinner",
+            ChatId = -100123456L
+        };
+        _chainServiceMock.CreateChainAsync(Arg.Any<string>(), Arg.Any<long>(), Arg.Any<CancellationToken>())
+            .Returns(dummyChain);
+
+        _telegramServiceMock.SendChainMessageAsync(Arg.Any<long>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns((-100123456L, 12345L));
+
+        var mockMsg = CreateMockMessage(-100123456L, ChatType.Supergroup, "/start_chain Pizza Dinner", 11111, "alice", "Alice");
+        var update = new Update { Id = 1, Message = mockMsg };
+
+        await handler.HandleAsync(update, CancellationToken.None);
+
+        // Should allow without leaving chat
+        await _telegramServiceMock.DidNotReceive().LeaveChatAsync(Arg.Any<long>(), Arg.Any<CancellationToken>());
+        // Since it's Disabled mode, should NOT add ManagedChat to db
+        var managed = await _db.ManagedChats.FindAsync(-100123456L);
+        Assert.Null(managed);
+    }
+
+    [Fact]
+    public async Task HandleAsync_RegistersAsPendingButAllows_WhenWhitelistModeIsAudit()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["BOT_OWNER_IDS"] = "99999",
+                ["GLOBAL_WHITELIST_MODE"] = "Audit"
+            })
+            .Build();
+        var authService = new ManagedChatAuthorizationService(_db, config, NullLogger<ManagedChatAuthorizationService>.Instance);
+        var handler = new UpdateHandler(
+            _chainServiceMock,
+            _telegramServiceMock,
+            _db,
+            _adminValidator,
+            config,
+            authService,
+            NullLogger<UpdateHandler>.Instance);
+
+        var dummyChain = new Chain
+        {
+            Id = 1,
+            PublicId = "mock_public_id",
+            Title = "Pizza Dinner",
+            ChatId = -100123456L
+        };
+        _chainServiceMock.CreateChainAsync(Arg.Any<string>(), Arg.Any<long>(), Arg.Any<CancellationToken>())
+            .Returns(dummyChain);
+
+        _telegramServiceMock.SendChainMessageAsync(Arg.Any<long>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns((-100123456L, 12345L));
+
+        var mockMsg = CreateMockMessage(-100123456L, ChatType.Supergroup, "/start_chain Pizza Dinner", 11111, "alice", "Alice");
+        var update = new Update { Id = 1, Message = mockMsg };
+
+        await handler.HandleAsync(update, CancellationToken.None);
+
+        // Should register group as Pending in DB under Audit mode
+        var managed = await _db.ManagedChats.FindAsync(-100123456L);
+        Assert.NotNull(managed);
+        Assert.Equal(AuthorizationStatus.Pending, managed.AuthorizationStatus);
+
+        // But should NOT leave the chat
+        await _telegramServiceMock.DidNotReceive().LeaveChatAsync(Arg.Any<long>(), Arg.Any<CancellationToken>());
     }
 }

@@ -8,8 +8,11 @@ export async function render(container) {
     container.appendChild(loading);
 
     try {
-        const accounts = await apiFetch('/api/admin/accounts');
+        // Query paginated response
+        const res = await apiFetch('/api/admin/accounts?page=1&pageSize=100');
         container.textContent = '';
+
+        const accounts = res.items || [];
 
         const header = el('div', { className: 'header-action' },
             el('h1', {}, '管理员管理')
@@ -28,7 +31,7 @@ export async function render(container) {
                     el('th', {}, 'ID'),
                     el('th', {}, '用户名'),
                     el('th', {}, '角色'),
-                    el('th', {}, '是否激活'),
+                    el('th', {}, '状态'),
                     el('th', {}, '操作')
                 )
             )
@@ -39,27 +42,60 @@ export async function render(container) {
             const tdActions = el('td', {});
 
             if (hasPermission('Admin.ManageAccounts')) {
+                const btnEdit = el('button', {
+                    onclick: () => openEditAdminModal(a, container)
+                }, '修改');
+                tdActions.appendChild(btnEdit);
+                tdActions.appendChild(document.createTextNode(' '));
+
                 const btnReset = el('button', {
                     onclick: () => openResetPasswordModal(a)
                 }, '重置密码');
                 tdActions.appendChild(btnReset);
+                tdActions.appendChild(document.createTextNode(' '));
 
-                if (a.role !== 'RootAdmin') {
-                    const btnDelete = el('button', {
+                const btnRevoke = el('button', {
+                    onclick: async () => {
+                        if (confirm(`确定要强制撤销管理员 "${a.username}" 的所有在线会话吗？`)) {
+                            try {
+                                await apiFetch(`/api/admin/accounts/${a.id}/revoke-sessions`, { method: 'POST' });
+                                alert('会话撤销成功');
+                            } catch (e) {
+                                alert('撤销会话失败: ' + e.message);
+                            }
+                        }
+                    }
+                }, '撤销会话');
+                tdActions.appendChild(btnRevoke);
+                tdActions.appendChild(document.createTextNode(' '));
+
+                if (a.isDisabled) {
+                    const btnEnable = el('button', {
+                        onclick: async () => {
+                            try {
+                                await apiFetch(`/api/admin/accounts/${a.id}/enable`, { method: 'POST' });
+                                render(container);
+                            } catch (e) {
+                                alert('启用失败: ' + e.message);
+                            }
+                        }
+                    }, '启用');
+                    tdActions.appendChild(btnEnable);
+                } else {
+                    const btnDisable = el('button', {
                         className: 'danger',
                         onclick: async () => {
-                            if (safeConfirm(`确定要删除管理员账号 "${a.username}" 吗？`, a.username)) {
+                            if (confirm(`确定要禁用管理员 "${a.username}" 吗？`)) {
                                 try {
-                                    await apiFetch(`/api/admin/accounts/${a.id}`, { method: 'DELETE' });
+                                    await apiFetch(`/api/admin/accounts/${a.id}/disable`, { method: 'POST' });
                                     render(container);
                                 } catch (e) {
-                                    alert('删除失败: ' + e.message);
+                                    alert('禁用失败: ' + e.message);
                                 }
                             }
                         }
-                    }, '删除');
-                    tdActions.appendChild(document.createTextNode(' '));
-                    tdActions.appendChild(btnDelete);
+                    }, '禁用');
+                    tdActions.appendChild(btnDisable);
                 }
             } else {
                 tdActions.textContent = '-';
@@ -70,7 +106,7 @@ export async function render(container) {
                     el('td', {}, a.id.toString()),
                     el('td', {}, a.username),
                     el('td', {}, a.role),
-                    el('td', {}, a.isActive ? '是' : '否'),
+                    el('td', {}, a.isDisabled ? '已禁用' : '正常'),
                     tdActions
                 )
             );
@@ -90,7 +126,8 @@ function openCreateAdminModal(container) {
     const inputPass = el('input', { type: 'password', placeholder: '密码' });
     const selectRole = el('select', {},
         el('option', { value: 'OperatorAdmin' }, 'OperatorAdmin (运营)'),
-        el('option', { value: 'AuditorAdmin' }, 'AuditorAdmin (审计)')
+        el('option', { value: 'AuditorAdmin' }, 'AuditorAdmin (审计)'),
+        el('option', { value: 'RootAdmin' }, 'RootAdmin (系统管理)')
     );
 
     const modal = el('div', { className: 'modal' },
@@ -129,6 +166,58 @@ function openCreateAdminModal(container) {
                             render(container);
                         } catch (e) {
                             alert('创建失败: ' + e.message);
+                        }
+                    }
+                }, '保存'),
+                el('button', {
+                    className: 'secondary',
+                    onclick: () => document.body.removeChild(modal)
+                }, '取消')
+            )
+        )
+    );
+    document.body.appendChild(modal);
+}
+
+function openEditAdminModal(account, container) {
+    const inputUser = el('input', { type: 'text', value: account.username });
+    const selectRole = el('select', {},
+        el('option', { value: 'OperatorAdmin', selected: account.role === 'OperatorAdmin' }, 'OperatorAdmin (运营)'),
+        el('option', { value: 'AuditorAdmin', selected: account.role === 'AuditorAdmin' }, 'AuditorAdmin (审计)'),
+        el('option', { value: 'RootAdmin', selected: account.role === 'RootAdmin' }, 'RootAdmin (系统管理)')
+    );
+
+    const modal = el('div', { className: 'modal' },
+        el('div', { className: 'modal-content' },
+            el('h2', {}, `修改管理员: ${account.username}`),
+            el('div', { className: 'form-group' },
+                el('label', {}, '用户名:'),
+                inputUser
+            ),
+            el('div', { className: 'form-group' },
+                el('label', {}, '角色:'),
+                selectRole
+            ),
+            el('div', { className: 'modal-actions' },
+                el('button', {
+                    onclick: async () => {
+                        const username = inputUser.value.trim();
+                        const role = selectRole.value;
+
+                        if (!username) {
+                            alert('用户名不能为空');
+                            return;
+                        }
+
+                        try {
+                            await apiFetch(`/api/admin/accounts/${account.id}`, {
+                                method: 'PUT',
+                                body: JSON.stringify({ username, role })
+                            });
+                            document.body.removeChild(modal);
+                            render(container);
+                        } catch (e) {
+                            alert('修改失败: ' + e.message);
                         }
                     }
                 }, '保存'),

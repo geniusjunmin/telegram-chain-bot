@@ -44,9 +44,9 @@ public static class SqliteBackupHelper
         using var command = connection.CreateCommand();
         command.CommandText = "PRAGMA integrity_check;";
         var result = command.ExecuteScalar()?.ToString();
-        
+
         logger?.LogInformation("Integrity check result for backup {Path}: {Result}", path, result);
-        
+
         if (!string.Equals(result, "ok", StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException($"SQLite backup integrity check failed for {path}: {result}");

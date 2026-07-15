@@ -27,7 +27,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         });
 
         Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Development");
-        Environment.SetEnvironmentVariable("INITIAL_ADMIN_PASSWORD", "SuperSecurePassword123!");
+        Environment.SetEnvironmentVariable("INITIAL_ADMIN_PASSWORD", "SuperSecureAcc123!");
         Environment.SetEnvironmentVariable("INITIAL_ADMIN_PASSWORD_FILE", null);
 
         builder.ConfigureServices(services =>
@@ -61,17 +61,17 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             };
 
             botClientMock.SendRequest(
-                Arg.Any<Telegram.Bot.Requests.Abstractions.IRequest<Telegram.Bot.Types.User>>(), 
+                Arg.Any<Telegram.Bot.Requests.Abstractions.IRequest<Telegram.Bot.Types.User>>(),
                 Arg.Any<CancellationToken>())
                 .Returns(Task.FromResult(mockUser));
 
             botClientMock.MakeRequest(
-                Arg.Any<Telegram.Bot.Requests.Abstractions.IRequest<Telegram.Bot.Types.User>>(), 
+                Arg.Any<Telegram.Bot.Requests.Abstractions.IRequest<Telegram.Bot.Types.User>>(),
                 Arg.Any<CancellationToken>())
                 .Returns(Task.FromResult(mockUser));
 
             botClientMock.MakeRequestAsync(
-                Arg.Any<Telegram.Bot.Requests.Abstractions.IRequest<Telegram.Bot.Types.User>>(), 
+                Arg.Any<Telegram.Bot.Requests.Abstractions.IRequest<Telegram.Bot.Types.User>>(),
                 Arg.Any<CancellationToken>())
                 .Returns(Task.FromResult(mockUser));
 
@@ -79,20 +79,20 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             var mockMessage = System.Text.Json.JsonSerializer.Deserialize<Telegram.Bot.Types.Message>(messageJson)!;
 
             botClientMock.SendRequest(
-                Arg.Any<Telegram.Bot.Requests.Abstractions.IRequest<Telegram.Bot.Types.Message>>(), 
+                Arg.Any<Telegram.Bot.Requests.Abstractions.IRequest<Telegram.Bot.Types.Message>>(),
                 Arg.Any<CancellationToken>())
                 .Returns(Task.FromResult(mockMessage));
 
             botClientMock.MakeRequest(
-                Arg.Any<Telegram.Bot.Requests.Abstractions.IRequest<Telegram.Bot.Types.Message>>(), 
+                Arg.Any<Telegram.Bot.Requests.Abstractions.IRequest<Telegram.Bot.Types.Message>>(),
                 Arg.Any<CancellationToken>())
                 .Returns(Task.FromResult(mockMessage));
 
             botClientMock.MakeRequestAsync(
-                Arg.Any<Telegram.Bot.Requests.Abstractions.IRequest<Telegram.Bot.Types.Message>>(), 
+                Arg.Any<Telegram.Bot.Requests.Abstractions.IRequest<Telegram.Bot.Types.Message>>(),
                 Arg.Any<CancellationToken>())
                 .Returns(Task.FromResult(mockMessage));
-            
+
             // Remove existing ITelegramBotClient registration
             var botDescriptor = services.SingleOrDefault(
                 d => d.ServiceType == typeof(ITelegramBotClient));

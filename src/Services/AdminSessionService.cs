@@ -1,45 +1,73 @@
 using System;
-using System.Collections.Concurrent;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using TelegramChainBot.Database;
+using TelegramChainBot.Database.Models;
 
 namespace TelegramChainBot.Services;
 
-public sealed class AdminSessionService
+public sealed class AdminSessionService(AppDbContext db)
 {
-    private readonly ConcurrentDictionary<string, int> _activeSessions = new();
-
-    public string RegisterSession(int adminId)
+    public async Task<string> RegisterSessionAsync(int adminId, TimeSpan expiry, CancellationToken ct)
     {
         var sessionId = Guid.NewGuid().ToString("N");
-        _activeSessions[sessionId] = adminId;
+        var session = new AdminSession
+        {
+            SessionId = sessionId,
+            AdminId = adminId,
+            CreatedAt = DateTimeOffset.UtcNow,
+            ExpiresAt = DateTimeOffset.UtcNow.Add(expiry),
+            IsRevoked = false
+        };
+        db.AdminSessions.Add(session);
+        await db.SaveChangesAsync(ct);
         return sessionId;
     }
 
-    public bool IsSessionActive(string? sessionId)
+    public async Task<bool> IsSessionActiveAsync(string? sessionId, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(sessionId)) return false;
-        return _activeSessions.ContainsKey(sessionId);
+        var session = await db.AdminSessions.FindAsync([sessionId], ct);
+        if (session == null || session.IsRevoked || session.ExpiresAt <= DateTimeOffset.UtcNow)
+        {
+            return false;
+        }
+        return true;
     }
 
-    public int? GetAdminId(string? sessionId)
+    public async Task<int?> GetAdminIdAsync(string? sessionId, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(sessionId)) return null;
-        return _activeSessions.TryGetValue(sessionId, out var adminId) ? adminId : null;
+        var session = await db.AdminSessions.FindAsync([sessionId], ct);
+        if (session == null || session.IsRevoked || session.ExpiresAt <= DateTimeOffset.UtcNow)
+        {
+            return null;
+        }
+        return session.AdminId;
     }
 
-    public void RevokeSession(string? sessionId)
+    public async Task RevokeSessionAsync(string? sessionId, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(sessionId)) return;
-        _activeSessions.TryRemove(sessionId, out _);
+        var session = await db.AdminSessions.FindAsync([sessionId], ct);
+        if (session != null)
+        {
+            session.IsRevoked = true;
+            await db.SaveChangesAsync(ct);
+        }
     }
 
-    public void RevokeAllSessionsForAdmin(int adminId)
+    public async Task RevokeAllSessionsForAdminAsync(int adminId, CancellationToken ct)
     {
-        foreach (var pair in _activeSessions)
+        var sessions = await db.AdminSessions
+            .Where(s => s.AdminId == adminId && !s.IsRevoked)
+            .ToListAsync(ct);
+        foreach (var s in sessions)
         {
-            if (pair.Value == adminId)
-            {
-                _activeSessions.TryRemove(pair.Key, out _);
-            }
+            s.IsRevoked = true;
         }
+        await db.SaveChangesAsync(ct);
     }
 }

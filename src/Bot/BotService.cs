@@ -7,7 +7,7 @@ using TelegramChainBot.Database.Models;
 namespace TelegramChainBot.Bot;
 
 public sealed class BotService(
-    UpdateHandler updateHandler, 
+    UpdateHandler updateHandler,
     AppDbContext db,
     ILogger<BotService> logger)
 {
@@ -53,7 +53,7 @@ public sealed class BotService(
             };
 
             db.ProcessedTelegramUpdates.Add(record);
-            
+
             try
             {
                 await db.SaveChangesAsync(cancellationToken);
@@ -68,7 +68,7 @@ public sealed class BotService(
         try
         {
             await updateHandler.HandleAsync(update, cancellationToken);
-            
+
             record.Status = "Processed";
             record.ProcessedAt = DateTimeOffset.UtcNow;
             await db.SaveChangesAsync(cancellationToken);
@@ -76,11 +76,11 @@ public sealed class BotService(
         catch (Exception ex)
         {
             logger.LogError(ex, "Error occurred processing Telegram Update {UpdateId}.", update.Id);
-            
+
             record.Status = "Failed";
             record.LastError = ex.Message.Length <= 500 ? ex.Message : ex.Message[..500];
             await db.SaveChangesAsync(cancellationToken);
-            
+
             throw; // Rethrow to let the webhook return non-200 and trigger retry
         }
     }

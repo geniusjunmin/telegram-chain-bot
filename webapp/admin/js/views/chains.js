@@ -8,8 +8,10 @@ export async function render(container) {
     container.appendChild(loading);
 
     try {
-        const chains = await apiFetch('/api/admin/chains');
+        const res = await apiFetch('/api/admin/chains?page=1&pageSize=100');
         container.textContent = '';
+
+        const chains = res.items || [];
 
         const header = el('div', { className: 'header-action' },
             el('h1', {}, '接龙列表')
@@ -23,6 +25,7 @@ export async function render(container) {
                     el('th', {}, '标题'),
                     el('th', {}, '创建时间'),
                     el('th', {}, '状态'),
+                    el('th', {}, '同步状态'),
                     el('th', {}, '操作')
                 )
             )
@@ -35,14 +38,78 @@ export async function render(container) {
             }, '查看成员');
             
             const rowActions = el('td', {}, btnView);
+            rowActions.appendChild(document.createTextNode(' '));
 
             if (hasPermission('Admin.ManageChains')) {
+                // If active, allow close and cancel
+                if (c.status === 'Active') {
+                    const btnClose = el('button', {
+                        onclick: async () => {
+                            if (confirm(`确定要关闭接龙 "${c.title}" 吗？`)) {
+                                try {
+                                    await apiFetch(`/api/admin/chains/${c.publicId}/close`, { method: 'POST' });
+                                    render(container);
+                                } catch (e) {
+                                    alert('关闭失败: ' + e.message);
+                                }
+                            }
+                        }
+                    }, '关闭');
+                    rowActions.appendChild(btnClose);
+                    rowActions.appendChild(document.createTextNode(' '));
+
+                    const btnCancel = el('button', {
+                        onclick: async () => {
+                            if (confirm(`确定要取消接龙 "${c.title}" 吗？`)) {
+                                try {
+                                    await apiFetch(`/api/admin/chains/${c.publicId}/cancel`, { method: 'POST' });
+                                    render(container);
+                                } catch (e) {
+                                    alert('取消失败: ' + e.message);
+                                }
+                            }
+                        }
+                    }, '取消');
+                    rowActions.appendChild(btnCancel);
+                    rowActions.appendChild(document.createTextNode(' '));
+                } else if (c.status === 'Closed' || c.status === 'Cancelled' || c.status === 'Expired') {
+                    // Allow restore
+                    const btnRestore = el('button', {
+                        onclick: async () => {
+                            try {
+                                await apiFetch(`/api/admin/chains/${c.publicId}/restore`, { method: 'POST' });
+                                render(container);
+                            } catch (e) {
+                                alert('恢复失败: ' + e.message);
+                            }
+                        }
+                    }, '恢复');
+                    rowActions.appendChild(btnRestore);
+                    rowActions.appendChild(document.createTextNode(' '));
+                }
+
+                // Resync button
+                const btnResync = el('button', {
+                    onclick: async () => {
+                        try {
+                            await apiFetch(`/api/admin/chains/${c.publicId}/resync`, { method: 'POST' });
+                            alert('同步任务已触发');
+                            render(container);
+                        } catch (e) {
+                            alert('同步失败: ' + e.message);
+                        }
+                    }
+                }, '同步');
+                rowActions.appendChild(btnResync);
+                rowActions.appendChild(document.createTextNode(' '));
+
+                // Soft-delete button
                 const btnDelete = el('button', {
                     className: 'danger',
                     onclick: async () => {
                         if (safeConfirm(`确定要删除接龙 "${c.title}" 吗？所有成员数据将被软删除！`, c.title)) {
                             try {
-                                await apiFetch(`/api/admin/chains/${c.id}`, { method: 'DELETE' });
+                                await apiFetch(`/api/admin/chains/${c.publicId}`, { method: 'DELETE' });
                                 render(container);
                             } catch (e) {
                                 alert('删除失败: ' + e.message);
@@ -50,7 +117,6 @@ export async function render(container) {
                         }
                     }
                 }, '删除');
-                rowActions.appendChild(document.createTextNode(' '));
                 rowActions.appendChild(btnDelete);
             }
 
@@ -59,7 +125,8 @@ export async function render(container) {
                     el('td', {}, c.id.toString()),
                     el('td', {}, c.title),
                     el('td', {}, new Date(c.createdAt).toLocaleString()),
-                    el('td', {}, c.status === 2 ? 'Active' : 'Closed'),
+                    el('td', {}, c.status),
+                    el('td', {}, c.telegramSyncStatus === 'Synced' ? '同步成功' : (c.telegramSyncStatus === 'Failed' ? `同步失败 (${c.lastSyncError || ''})` : '未同步')),
                     rowActions
                 )
             );
@@ -114,6 +181,7 @@ async function viewMembers(container, chainId, title) {
                     onclick: async () => {
                         if (safeConfirm(`确定要将成员 "${m.displayName}" 从接龙中移除吗？`)) {
                             try {
+                                // The API UpdateMember DTO was updated, let's keep the parameter structure consistent.
                                 await apiFetch(`/api/admin/members/${m.id}`, { method: 'DELETE' });
                                 viewMembers(container, chainId, title);
                             } catch (e) {
@@ -150,6 +218,7 @@ async function viewMembers(container, chainId, title) {
 }
 
 function openEditMemberModal(container, chainId, title, member) {
+    // In our updated UpdateMemberRequest DTO, we have Username and TelegramNickname fields
     const inputUsername = el('input', { type: 'text', value: member.displayName });
     const inputNickname = el('input', { type: 'text', value: member.telegramUsername || '' });
     
@@ -167,16 +236,16 @@ function openEditMemberModal(container, chainId, title, member) {
             el('div', { className: 'modal-actions' },
                 el('button', {
                     onclick: async () => {
-                        const displayName = inputUsername.value.trim();
-                        const telegramUsername = inputNickname.value.trim();
-                        if (!displayName) {
+                        const username = inputUsername.value.trim();
+                        const telegramNickname = inputNickname.value.trim();
+                        if (!username) {
                             alert('显示名称不能为空');
                             return;
                         }
                         try {
                             await apiFetch(`/api/admin/members/${member.id}`, {
                                 method: 'PUT',
-                                body: JSON.stringify({ displayName, telegramUsername })
+                                body: JSON.stringify({ Username: username, TelegramNickname: telegramNickname })
                             });
                             document.body.removeChild(modal);
                             viewMembers(container, chainId, title);

@@ -31,6 +31,7 @@ public static class ChainController
         HttpRequest httpRequest,
         AppDbContext db,
         ChainService chainService,
+        ManagedChatAuthorizationService authService,
         TelegramInitDataValidator validator,
         CancellationToken cancellationToken)
     {
@@ -38,6 +39,13 @@ public static class ChainController
         if (chain is null || chain.Status == ChainStatus.Deleted)
         {
             return Results.NotFound(new { error = "chain not found" });
+        }
+
+        var chatTitle = chain.Title;
+        var authorized = await authService.IsChatAuthorizedAsync(chain.ChatId, chatTitle, "group", cancellationToken);
+        if (!authorized)
+        {
+            return Results.StatusCode((int)HttpStatusCode.Forbidden);
         }
 
         var members = await db.ChainMembers
@@ -54,7 +62,7 @@ public static class ChainController
             if (validatedUser != null)
             {
                 hasJoined = await db.ChainMembers.AnyAsync(
-                    m => m.ChainId == chain.Id && m.TelegramUserId == validatedUser.UserId && m.Status == ChainMemberStatus.Active, 
+                    m => m.ChainId == chain.Id && m.TelegramUserId == validatedUser.UserId && m.Status == ChainMemberStatus.Active,
                     cancellationToken);
             }
         }
@@ -77,6 +85,7 @@ public static class ChainController
         JoinRequest request,
         HttpRequest httpRequest,
         ChainService chainService,
+        ManagedChatAuthorizationService authService,
         TelegramInitDataValidator validator,
         TelegramService telegramService,
         ILoggerFactory loggerFactory,
@@ -84,7 +93,7 @@ public static class ChainController
     {
         var logger = loggerFactory.CreateLogger("ChainController");
         var initData = httpRequest.Headers["X-Telegram-Init-Data"].ToString();
-        
+
         var validatedUser = validator.Validate(initData);
         if (validatedUser == null)
         {
@@ -97,6 +106,12 @@ public static class ChainController
         {
             logger.LogWarning("Chain {PublicId} not found during Join.", publicId);
             return Results.NotFound(new { error = "chain not found" });
+        }
+
+        var authorized = await authService.IsChatAuthorizedAsync(chain.ChatId, chain.Title, "group", cancellationToken);
+        if (!authorized)
+        {
+            return Results.StatusCode((int)HttpStatusCode.Forbidden);
         }
 
         var displayName = InputSanitizer.SanitizeName(request.DisplayName);
@@ -126,8 +141,7 @@ public static class ChainController
             return Results.BadRequest(new { error });
         }
 
-        var messageText = ChainService.FormatChainMessage(chain.Title, members);
-        await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId.GetValueOrDefault(), chain.PublicId, messageText, cancellationToken);
+        await telegramService.SyncChainMessageAsync(chain.Id, cancellationToken);
 
         return Results.Ok(new
         {
@@ -141,6 +155,7 @@ public static class ChainController
         string publicId,
         HttpRequest httpRequest,
         ChainService chainService,
+        ManagedChatAuthorizationService authService,
         TelegramInitDataValidator validator,
         TelegramService telegramService,
         ILoggerFactory loggerFactory,
@@ -148,7 +163,7 @@ public static class ChainController
     {
         var logger = loggerFactory.CreateLogger("ChainController");
         var initData = httpRequest.Headers["X-Telegram-Init-Data"].ToString();
-        
+
         var validatedUser = validator.Validate(initData);
         if (validatedUser == null)
         {
@@ -161,6 +176,12 @@ public static class ChainController
         {
             logger.LogWarning("Chain {PublicId} not found during Leave.", publicId);
             return Results.NotFound(new { error = "chain not found" });
+        }
+
+        var authorized = await authService.IsChatAuthorizedAsync(chain.ChatId, chain.Title, "group", cancellationToken);
+        if (!authorized)
+        {
+            return Results.StatusCode((int)HttpStatusCode.Forbidden);
         }
 
         logger.LogInformation(
@@ -180,8 +201,7 @@ public static class ChainController
 
         if (removed)
         {
-            var messageText = ChainService.FormatChainMessage(chain.Title, members);
-            await telegramService.EditChainMessageAsync(chain.ChatId, chain.MessageId.GetValueOrDefault(), chain.PublicId, messageText, cancellationToken);
+            await telegramService.SyncChainMessageAsync(chain.Id, cancellationToken);
         }
 
         return Results.Ok(new
