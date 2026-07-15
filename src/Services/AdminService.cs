@@ -151,10 +151,11 @@ public sealed class AdminService(
             password = Environment.GetEnvironmentVariable("INITIAL_ADMIN_PASSWORD")?.Trim();
         }
 
-        // 3. If there is no active RootAdmin in the DB, and no configuration parameters were found, abort startup with error.
+        // 3. Fallback to default credentials if no password was configured
         if (string.IsNullOrWhiteSpace(password))
         {
-            throw new InvalidOperationException("No active RootAdmin exists in the database and no valid initial admin password was configured. Application startup halted.");
+            password = "Root@12345678";
+            Console.WriteLine($"No initial admin password was configured. Bootstrapping with default credentials: username='{username}', password='{password}' (Change it immediately on first login).");
         }
 
         // 4. Validate password against unified password policy
