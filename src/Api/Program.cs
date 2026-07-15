@@ -340,7 +340,11 @@ async Task<IResult> ServeIndexHtmlAsync(string relativePath, AppDbContext db, Ht
 
     var html = await System.IO.File.ReadAllTextAsync(filePath);
     var settings = await db.SystemSettings.FirstOrDefaultAsync();
-    var version = settings?.StaticVersion ?? "1.0.0";
+    var version = settings?.StaticVersion ?? "1.0.1";
+    if (version == "1.0.0" || string.IsNullOrWhiteSpace(version))
+    {
+        version = "1.0.1";
+    }
 
     html = html.Replace("href=\"style.css?v=20260310-1\"", $"href=\"style.css?v={version}\"");
     html = html.Replace("src=\"app.js?v=20260310-1\"", $"src=\"app.js?v={version}\"");
