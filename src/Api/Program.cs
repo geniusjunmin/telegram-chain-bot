@@ -256,6 +256,11 @@ app.UseAntiforgery();
 var webAppPath = Path.GetFullPath(Path.Combine(app.Environment.ContentRootPath, "..", "webapp"));
 if (Directory.Exists(webAppPath))
 {
+    app.UseDefaultFiles(new DefaultFilesOptions
+    {
+        FileProvider = new PhysicalFileProvider(webAppPath),
+        RequestPath = "/webapp"
+    });
     app.UseStaticFiles(new StaticFileOptions
     {
         FileProvider = new PhysicalFileProvider(webAppPath),
@@ -267,6 +272,11 @@ else
     var fallbackPath = Path.Combine(app.Environment.ContentRootPath, "webapp");
     if (Directory.Exists(fallbackPath))
     {
+        app.UseDefaultFiles(new DefaultFilesOptions
+        {
+            FileProvider = new PhysicalFileProvider(fallbackPath),
+            RequestPath = "/webapp"
+        });
         app.UseStaticFiles(new StaticFileOptions
         {
             FileProvider = new PhysicalFileProvider(fallbackPath),
