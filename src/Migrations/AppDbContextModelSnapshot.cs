@@ -79,6 +79,31 @@ namespace TelegramChainBot.Migrations
                     b.ToTable("admin_accounts", (string)null);
                 });
 
+            modelBuilder.Entity("TelegramChainBot.Database.Models.AdminSession", b =>
+                {
+                    b.Property<string>("SessionId")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("AdminId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CreatedAt")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ExpiresAt")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsRevoked")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("SessionId");
+
+                    b.ToTable("admin_sessions", (string)null);
+                });
+
             modelBuilder.Entity("TelegramChainBot.Database.Models.AuditLog", b =>
                 {
                     b.Property<long>("Id")
@@ -370,6 +395,9 @@ namespace TelegramChainBot.Migrations
                 {
                     b.Property<int>("Id")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("BotToken")
+                        .HasColumnType("TEXT");
 
                     b.Property<int>("DefaultChainExpiryHours")
                         .HasColumnType("INTEGER");

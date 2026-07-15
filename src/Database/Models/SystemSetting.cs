@@ -14,6 +14,7 @@ public sealed class SystemSetting
     public int TelegramInitDataMaxAgeSeconds { get; set; } = 86400;
     public int DeletedDataRetentionDays { get; set; } = 30;
     public bool RequireMfaForSuperAdmin { get; set; } = false;
+    public string? BotToken { get; set; }
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
     public int? UpdatedByAdminId { get; set; }
 }

@@ -1076,6 +1076,8 @@ public static class AdminController
         SystemSetting request,
         HttpContext context,
         AppDbContext db,
+        BotTokenProvider tokenProvider,
+        TelegramService tg,
         AuditLogService auditLog,
         CancellationToken ct)
     {
@@ -1091,6 +1093,29 @@ public static class AdminController
         var adminIdClaim = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         int? adminId = int.TryParse(adminIdClaim, out var parsedId) ? parsedId : null;
 
+        var originalToken = tokenProvider.Token;
+        if (!string.IsNullOrWhiteSpace(request.BotToken) && request.BotToken != originalToken)
+        {
+            try
+            {
+                // Temporarily update the token in provider
+                tokenProvider.UpdateToken(request.BotToken);
+
+                // Try calling getMe to verify the token is valid
+                var botClient = tokenProvider.GetClient();
+                await botClient.SendRequest(new Telegram.Bot.Requests.GetMeRequest(), ct);
+
+                // Re-register webhook for the new bot
+                await tg.EnsureWebhookAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                // Roll back token in memory
+                tokenProvider.UpdateToken(originalToken);
+                return Results.BadRequest(new { error = $"Invalid Telegram Bot Token or connection error: {ex.Message}" });
+            }
+        }
+
         settings.WhitelistMode = request.WhitelistMode;
         settings.UnauthorizedChatBehavior = request.UnauthorizedChatBehavior;
         settings.DefaultCreatePolicy = request.DefaultCreatePolicy;
@@ -1100,6 +1125,7 @@ public static class AdminController
         settings.TelegramInitDataMaxAgeSeconds = request.TelegramInitDataMaxAgeSeconds;
         settings.DeletedDataRetentionDays = request.DeletedDataRetentionDays;
         settings.RequireMfaForSuperAdmin = request.RequireMfaForSuperAdmin;
+        settings.BotToken = request.BotToken;
         settings.UpdatedAt = DateTimeOffset.UtcNow;
         settings.UpdatedByAdminId = adminId;
 

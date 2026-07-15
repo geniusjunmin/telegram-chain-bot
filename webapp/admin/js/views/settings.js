@@ -36,7 +36,8 @@ export async function render(container) {
         const inputMaxActiveChains = el('input', { type: 'number', value: settings.maxActiveChainsPerChat, disabled: !hasPermission('Admin.ManageSettings') });
         const inputInitDataMaxAge = el('input', { type: 'number', value: settings.telegramInitDataMaxAgeSeconds, disabled: !hasPermission('Admin.ManageSettings') });
         const inputDataRetention = el('input', { type: 'number', value: settings.deletedDataRetentionDays, disabled: !hasPermission('Admin.ManageSettings') });
-
+        const inputBotToken = el('input', { type: 'password', value: settings.botToken || '', placeholder: '请输入 Telegram Bot Token', disabled: !hasPermission('Admin.ManageSettings') });
+ 
         const card = el('div', { className: 'card change-pw-container' },
             el('div', { className: 'form-group' },
                 el('label', {}, '白名单模式:'),
@@ -69,9 +70,13 @@ export async function render(container) {
             el('div', { className: 'form-group' },
                 el('label', {}, '被删除数据保留时长 (天):'),
                 inputDataRetention
+            ),
+            el('div', { className: 'form-group' },
+                el('label', {}, 'Telegram Bot Token (BOT_TOKEN):'),
+                inputBotToken
             )
         );
-
+ 
         if (hasPermission('Admin.ManageSettings')) {
             const btnSave = el('button', {
                 onclick: async () => {
@@ -85,7 +90,8 @@ export async function render(container) {
                         maxActiveChainsPerChat: parseInt(inputMaxActiveChains.value),
                         telegramInitDataMaxAgeSeconds: parseInt(inputInitDataMaxAge.value),
                         deletedDataRetentionDays: parseInt(inputDataRetention.value),
-                        requireMfaForSuperAdmin: settings.requireMfaForSuperAdmin
+                        requireMfaForSuperAdmin: settings.requireMfaForSuperAdmin,
+                        botToken: inputBotToken.value
                     };
 
                     if (Object.values(payload).some(v => typeof v === 'number' && isNaN(v))) {

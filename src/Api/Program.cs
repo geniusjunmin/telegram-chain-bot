@@ -156,16 +156,30 @@ builder.Services.AddRateLimiter(options =>
     });
 });
 
-builder.Services.AddSingleton<ITelegramBotClient>(sp =>
+builder.Services.AddSingleton<BotTokenProvider>(sp =>
 {
-    var options = sp.GetRequiredService<IOptions<BotOptions>>().Value;
-    if (string.IsNullOrWhiteSpace(options.BotToken))
+    using (var scope = sp.CreateScope())
     {
-        throw new InvalidOperationException("BOT_TOKEN is required.");
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        try
+        {
+            var settings = db.SystemSettings.FirstOrDefault();
+            if (settings != null && !string.IsNullOrWhiteSpace(settings.BotToken))
+            {
+                return new BotTokenProvider(settings.BotToken);
+            }
+        }
+        catch
+        {
+            // Ignore if database is not migrated yet
+        }
     }
 
-    return new TelegramBotClient(options.BotToken);
+    var options = sp.GetRequiredService<IOptions<BotOptions>>().Value;
+    return new BotTokenProvider(options.BotToken ?? string.Empty);
 });
+
+builder.Services.AddSingleton<ITelegramBotClient, DynamicTelegramBotClient>();
 
 builder.Services.AddScoped<ChainService>();
 builder.Services.AddScoped<TelegramService>();

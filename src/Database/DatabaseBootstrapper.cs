@@ -6,6 +6,8 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
+using TelegramChainBot.Database.Models;
+
 namespace TelegramChainBot.Database;
 
 public sealed class DatabaseBootstrapper(
@@ -151,6 +153,44 @@ public sealed class DatabaseBootstrapper(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to enable SQLite WAL journal mode.");
+        }
+
+        // 6. Ensure default system settings and bootstrap BotToken
+        var settings = await db.SystemSettings.FirstOrDefaultAsync(cancellationToken);
+        if (settings == null)
+        {
+            settings = new SystemSetting
+            {
+                Id = 1,
+                WhitelistMode = WhitelistMode.Enforced,
+                UnauthorizedChatBehavior = "WarnAndLeave",
+                DefaultCreatePolicy = CreatePolicy.Everyone,
+                DefaultMaxMembers = 100,
+                DefaultChainExpiryHours = 24,
+                MaxActiveChainsPerChat = 5,
+                TelegramInitDataMaxAgeSeconds = 86400,
+                DeletedDataRetentionDays = 30,
+                RequireMfaForSuperAdmin = false,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
+            db.SystemSettings.Add(settings);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        if (string.IsNullOrWhiteSpace(settings.BotToken))
+        {
+            var envToken = Environment.GetEnvironmentVariable("BOT_TOKEN");
+            var envTokenFile = Environment.GetEnvironmentVariable("BOT_TOKEN_FILE");
+            if (string.IsNullOrWhiteSpace(envToken) && !string.IsNullOrWhiteSpace(envTokenFile) && File.Exists(envTokenFile))
+            {
+                envToken = (await File.ReadAllTextAsync(envTokenFile, cancellationToken)).Trim();
+            }
+            if (!string.IsNullOrWhiteSpace(envToken))
+            {
+                settings.BotToken = envToken;
+                await db.SaveChangesAsync(cancellationToken);
+                logger.LogInformation("Bootstrapped SystemSettings.BotToken from environment configuration.");
+            }
         }
     }
 
