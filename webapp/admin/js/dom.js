@@ -7,6 +7,8 @@ export function el(tag, attrs = {}, ...children) {
             element.className = value;
         } else if (key === 'style' && typeof value === 'object') {
             Object.assign(element.style, value);
+        } else if (key === 'disabled') {
+            element.disabled = !!value;
         } else {
             element.setAttribute(key, value);
         }

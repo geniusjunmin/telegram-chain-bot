@@ -9,7 +9,8 @@ export async function render(container) {
 
     try {
         const stats = await apiFetch('/api/admin/dashboard-stats');
-        const chats = await apiFetch('/api/admin/chats');
+        const chatsRes = await apiFetch('/api/admin/chats?page=1&pageSize=100');
+        const chats = chatsRes.items || [];
         
         container.textContent = '';
 
