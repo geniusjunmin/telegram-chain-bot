@@ -277,6 +277,8 @@ else
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 app.MapGet("/health/live", () => Results.Ok(new { status = "Healthy" }));
+app.MapGet("/admin", () => Results.Redirect("/webapp/admin/"));
+app.MapGet("/", () => Results.Redirect("/webapp/"));
 app.MapGet("/health/ready", async (
     AppDbContext db,
     IConfiguration config,
