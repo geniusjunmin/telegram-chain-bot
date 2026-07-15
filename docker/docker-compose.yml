@@ -21,8 +21,8 @@ services:
       ADMIN_LOCKOUT_MINUTES: "${ADMIN_LOCKOUT_MINUTES}"
       TELEGRAM_INIT_DATA_MAX_AGE_SECONDS: "${TELEGRAM_INIT_DATA_MAX_AGE_SECONDS}"
       REQUIRE_MFA_FOR_SUPERADMIN: "${REQUIRE_MFA_FOR_SUPERADMIN}"
-    ports:
-      - "8787:8080"
+    networks:
+      - web-network
     volumes:
       - ../data:/app/data
       - ../backups:/app/backups
@@ -47,3 +47,7 @@ services:
           memory: 512M
         reservations:
           memory: 128M
+
+networks:
+  web-network:
+    external: true
