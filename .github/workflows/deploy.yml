@@ -31,6 +31,8 @@ jobs:
             cd /opt/telegram-chain-bot
             git fetch origin
             git reset --hard origin/main
+            mkdir -p data backups
+            sudo chown -R 1654:1654 data backups || chmod -R 777 data backups || true
             docker compose -f docker/docker-compose.yml pull
             docker compose -f docker/docker-compose.yml build --pull
             docker compose -f docker/docker-compose.yml up -d --remove-orphans
