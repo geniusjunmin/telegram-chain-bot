@@ -148,11 +148,7 @@ public sealed class AdminService(
         }
         else
         {
-            var envName = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production";
-            if (string.Equals(envName, "Development", StringComparison.OrdinalIgnoreCase))
-            {
-                password = Environment.GetEnvironmentVariable("INITIAL_ADMIN_PASSWORD")?.Trim();
-            }
+            password = Environment.GetEnvironmentVariable("INITIAL_ADMIN_PASSWORD")?.Trim();
         }
 
         // 3. If there is no active RootAdmin in the DB, and no configuration parameters were found, abort startup with error.
