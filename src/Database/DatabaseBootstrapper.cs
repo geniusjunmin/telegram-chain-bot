@@ -193,6 +193,13 @@ public sealed class DatabaseBootstrapper(
                 logger.LogInformation("Bootstrapped SystemSettings.BotToken from environment configuration.");
             }
         }
+
+        if (settings != null && (settings.StaticVersion == "1.0.0" || string.IsNullOrWhiteSpace(settings.StaticVersion)))
+        {
+            settings.StaticVersion = "1.0.1";
+            await db.SaveChangesAsync(cancellationToken);
+            logger.LogInformation("Automatically upgraded default StaticVersion to 1.0.1 to clear old browser cache.");
+        }
     }
 
     private static string? ParseDbPath(string? connectionString)

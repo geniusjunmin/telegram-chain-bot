@@ -8,7 +8,13 @@ export function el(tag, attrs = {}, ...children) {
         } else if (key === 'style' && typeof value === 'object') {
             Object.assign(element.style, value);
         } else if (key === 'disabled') {
-            element.disabled = !!value;
+            if (value) {
+                element.setAttribute('disabled', 'disabled');
+                element.disabled = true;
+            } else {
+                element.removeAttribute('disabled');
+                element.disabled = false;
+            }
         } else {
             element.setAttribute(key, value);
         }
