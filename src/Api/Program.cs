@@ -444,6 +444,7 @@ app.MapGet("/health/ready", async (
 async Task<IResult> HandleTelegramWebhookAsync(
     HttpContext context,
     WebhookSecretValidator secretValidator,
+    BotTokenProvider tokenProvider,
     BotService botService,
     CancellationToken cancellationToken)
 {
@@ -452,8 +453,29 @@ async Task<IResult> HandleTelegramWebhookAsync(
         return Results.StatusCode(StatusCodes.Status415UnsupportedMediaType);
     }
 
-    var secretHeader = context.Request.Headers["X-Telegram-Bot-Api-Secret-Token"].ToString();
-    if (!secretValidator.Validate(secretHeader))
+    var path = context.Request.Path.Value ?? "";
+    var legacyPathPrefix = "/telegram/webhook/";
+    bool isValid = false;
+
+    if (path.StartsWith(legacyPathPrefix, StringComparison.OrdinalIgnoreCase))
+    {
+        var tokenFromUrl = path[legacyPathPrefix.Length..].Trim();
+        var expectedToken = tokenProvider.Token ?? "";
+        if (!string.IsNullOrWhiteSpace(expectedToken) && string.Equals(tokenFromUrl, expectedToken, StringComparison.Ordinal))
+        {
+            isValid = true;
+        }
+    }
+    else
+    {
+        var secretHeader = context.Request.Headers["X-Telegram-Bot-Api-Secret-Token"].ToString();
+        if (secretValidator.Validate(secretHeader))
+        {
+            isValid = true;
+        }
+    }
+
+    if (!isValid)
     {
         return Results.Unauthorized();
     }
@@ -485,8 +507,16 @@ async Task<IResult> HandleTelegramWebhookAsync(
     return Results.Ok();
 }
 
+IResult HandleTelegramWebhookGet(HttpContext context)
+{
+    return Results.Ok(new { status = "active", message = "Telegram webhook receiver is active" });
+}
+
 app.MapPost("/telegram/webhook", HandleTelegramWebhookAsync);
 app.MapPost("/telegram/webhook/{*token}", HandleTelegramWebhookAsync);
+
+app.MapGet("/telegram/webhook", HandleTelegramWebhookGet);
+app.MapGet("/telegram/webhook/{*token}", HandleTelegramWebhookGet);
 
 app.MapChainEndpoints();
 app.MapAdminEndpoints();
