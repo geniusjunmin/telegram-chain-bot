@@ -3,9 +3,10 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.WebUtilities;
-using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
 using TelegramChainBot.Database;
 using TelegramChainBot.Options;
+using TelegramChainBot.Services;
 
 namespace TelegramChainBot.Security;
 
@@ -16,14 +17,16 @@ public sealed record ValidatedTelegramUser(
     string? LastName,
     DateTimeOffset AuthenticatedAt);
 
-public sealed class TelegramInitDataValidator(AppDbContext db, IOptions<BotOptions> options)
+public sealed class TelegramInitDataValidator(
+    AppDbContext db,
+    BotTokenProvider tokenProvider,
+    ILogger<TelegramInitDataValidator> logger)
 {
-    private readonly BotOptions _options = options.Value;
-
     public ValidatedTelegramUser? Validate(string? initData)
     {
         if (string.IsNullOrWhiteSpace(initData))
         {
+            logger.LogWarning("Telegram InitData validation failed: initData is null or empty.");
             return null;
         }
 
@@ -32,6 +35,7 @@ public sealed class TelegramInitDataValidator(AppDbContext db, IOptions<BotOptio
 
         if (!parsed.Remove("hash", out var hash) || string.IsNullOrWhiteSpace(hash))
         {
+            logger.LogWarning("Telegram InitData validation failed: missing or empty hash.");
             return null;
         }
 
@@ -39,9 +43,16 @@ public sealed class TelegramInitDataValidator(AppDbContext db, IOptions<BotOptio
             .OrderBy(x => x.Key, StringComparer.Ordinal)
             .Select(x => $"{x.Key}={x.Value}"));
 
-        // Validate HMAC signature
+        // Validate HMAC signature using current active Bot Token
+        var botToken = tokenProvider.Token ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(botToken))
+        {
+            logger.LogWarning("Telegram InitData validation failed: active Bot Token is empty.");
+            return null;
+        }
+
         using var hmacForKey = new HMACSHA256(Encoding.UTF8.GetBytes("WebAppData"));
-        var secret = hmacForKey.ComputeHash(Encoding.UTF8.GetBytes(_options.BotToken));
+        var secret = hmacForKey.ComputeHash(Encoding.UTF8.GetBytes(botToken));
 
         using var hmac = new HMACSHA256(secret);
         var computedHash = hmac.ComputeHash(Encoding.UTF8.GetBytes(checkString));
@@ -51,19 +62,22 @@ public sealed class TelegramInitDataValidator(AppDbContext db, IOptions<BotOptio
         {
             inputHashBytes = Convert.FromHexString(hash);
         }
-        catch
+        catch (Exception ex)
         {
+            logger.LogWarning(ex, "Telegram InitData validation failed: hash is not valid hex.");
             return null;
         }
 
         if (!CryptographicOperations.FixedTimeEquals(computedHash, inputHashBytes))
         {
+            logger.LogWarning("Telegram InitData validation failed: HMAC signature mismatch. Please check if the Bot Token configured in the database settings is correct.");
             return null;
         }
 
         // Validate auth_date
         if (!parsed.TryGetValue("auth_date", out var authDateStr) || !long.TryParse(authDateStr, out var authDateUnix))
         {
+            logger.LogWarning("Telegram InitData validation failed: missing or invalid auth_date.");
             return null;
         }
 
@@ -77,12 +91,14 @@ public sealed class TelegramInitDataValidator(AppDbContext db, IOptions<BotOptio
         // Reject if data is older than maxAge or more than 60 seconds in the future
         if (age.TotalSeconds > maxAge || age.TotalSeconds < -60)
         {
+            logger.LogWarning("Telegram InitData validation failed: credentials expired or invalid future offset. Age: {AgeSeconds}s, MaxAge: {MaxAgeSeconds}s.", age.TotalSeconds, maxAge);
             return null;
         }
 
         // Parse user data
         if (!parsed.TryGetValue("user", out var userJson) || string.IsNullOrWhiteSpace(userJson))
         {
+            logger.LogWarning("Telegram InitData validation failed: missing or empty user payload.");
             return null;
         }
 
@@ -91,6 +107,7 @@ public sealed class TelegramInitDataValidator(AppDbContext db, IOptions<BotOptio
             var telegramUser = JsonSerializer.Deserialize<TelegramUserPayload>(userJson);
             if (telegramUser == null || telegramUser.Id == 0)
             {
+                logger.LogWarning("Telegram InitData validation failed: deserialized user payload has ID 0.");
                 return null;
             }
 
@@ -102,8 +119,9 @@ public sealed class TelegramInitDataValidator(AppDbContext db, IOptions<BotOptio
                 authDate
             );
         }
-        catch
+        catch (Exception ex)
         {
+            logger.LogWarning(ex, "Telegram InitData validation failed: user payload deserialization failed. Raw json: {RawJson}", userJson);
             return null;
         }
     }
