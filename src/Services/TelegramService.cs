@@ -244,6 +244,23 @@ public class TelegramService(
         var baseUrl = _options.WebhookBaseUrl;
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
+            try
+            {
+                var webhookInfo = Task.Run(async () => await botClient.GetWebhookInfo()).GetAwaiter().GetResult();
+                var urlStr = webhookInfo?.Url;
+                if (!string.IsNullOrWhiteSpace(urlStr) && Uri.TryCreate(urlStr, UriKind.Absolute, out var uri))
+                {
+                    baseUrl = $"{uri.Scheme}://{uri.Authority}";
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to dynamically resolve WebApp base URL from Telegram Webhook Info");
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
             return $"https://example.com/webapp/index.html?chain_id={publicId}";
         }
 
