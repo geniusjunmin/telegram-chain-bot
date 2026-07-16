@@ -121,9 +121,19 @@ public class ChainApiTests : IClassFixture<CustomWebApplicationFactory>
         // Arrange
         var client = _factory.CreateClient();
 
-        // 1. Create a chain in the DB
+        // 1. Create a chain and settings in the DB
         using var scope = _factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var settings = db.SystemSettings.FirstOrDefault();
+        if (settings == null)
+        {
+            settings = new SystemSetting { Id = 1 };
+            db.SystemSettings.Add(settings);
+        }
+        settings.TelegramInitDataMaxAgeSeconds = 300;
+        await db.SaveChangesAsync();
+
         var chain = new Chain
         {
             PublicId = Guid.NewGuid().ToString("N"),

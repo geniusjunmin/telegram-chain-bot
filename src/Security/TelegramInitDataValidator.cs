@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Options;
+using TelegramChainBot.Database;
 using TelegramChainBot.Options;
 
 namespace TelegramChainBot.Security;
@@ -15,7 +16,7 @@ public sealed record ValidatedTelegramUser(
     string? LastName,
     DateTimeOffset AuthenticatedAt);
 
-public sealed class TelegramInitDataValidator(IOptions<BotOptions> options)
+public sealed class TelegramInitDataValidator(AppDbContext db, IOptions<BotOptions> options)
 {
     private readonly BotOptions _options = options.Value;
 
@@ -70,8 +71,11 @@ public sealed class TelegramInitDataValidator(IOptions<BotOptions> options)
         var now = DateTimeOffset.UtcNow;
         var age = now - authDate;
 
-        // Reject if data is older than 5 minutes or more than 5 seconds in the future
-        if (age.TotalSeconds > 300 || age.TotalSeconds < -5)
+        var settings = db.SystemSettings.FirstOrDefault();
+        var maxAge = settings?.TelegramInitDataMaxAgeSeconds ?? 86400;
+
+        // Reject if data is older than maxAge or more than 60 seconds in the future
+        if (age.TotalSeconds > maxAge || age.TotalSeconds < -60)
         {
             return null;
         }
