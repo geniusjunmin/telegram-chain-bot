@@ -441,11 +441,11 @@ app.MapGet("/health/ready", async (
 });
 
 // 彻底修复：使用固定路径 /telegram/webhook 并验证 X-Telegram-Bot-Api-Secret-Token 头
-app.MapPost("/telegram/webhook", async (
+async Task<IResult> HandleTelegramWebhookAsync(
     HttpContext context,
     WebhookSecretValidator secretValidator,
     BotService botService,
-    CancellationToken cancellationToken) =>
+    CancellationToken cancellationToken)
 {
     if (!context.Request.ContentType?.StartsWith("application/json", StringComparison.OrdinalIgnoreCase) ?? true)
     {
@@ -483,7 +483,10 @@ app.MapPost("/telegram/webhook", async (
     }
 
     return Results.Ok();
-});
+}
+
+app.MapPost("/telegram/webhook", HandleTelegramWebhookAsync);
+app.MapPost("/telegram/webhook/{*token}", HandleTelegramWebhookAsync);
 
 app.MapChainEndpoints();
 app.MapAdminEndpoints();
