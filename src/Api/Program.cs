@@ -252,7 +252,7 @@ app.Use(async (context, next) =>
 
 app.Use(async (context, next) =>
 {
-    context.Response.Headers.Append("Content-Security-Policy", "default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';");
+    context.Response.Headers.Append("Content-Security-Policy", "default-src 'self'; script-src 'self' https://telegram.org 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';");
     context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
     context.Response.Headers.Append("X-Frame-Options", "DENY");
     await next();

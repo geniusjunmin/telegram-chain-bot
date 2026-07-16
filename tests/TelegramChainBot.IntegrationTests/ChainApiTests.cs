@@ -287,7 +287,7 @@ public class ChainApiTests : IClassFixture<CustomWebApplicationFactory>
 
         // Assert
         Assert.True(response.Headers.Contains("Content-Security-Policy"));
-        Assert.Equal("default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';",
+        Assert.Equal("default-src 'self'; script-src 'self' https://telegram.org 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';",
             response.Headers.GetValues("Content-Security-Policy").First());
 
         Assert.True(response.Headers.Contains("X-Content-Type-Options"));

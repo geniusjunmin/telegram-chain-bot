@@ -15,8 +15,9 @@ export async function render(container) {
         container.appendChild(header);
 
         const selectWhitelistMode = el('select', { disabled: !hasPermission('Admin.ManageSettings') },
-            el('option', { value: '1', selected: settings.whitelistMode === 1 || settings.whitelistMode === 'Audit' }, 'Audit (审计模式，记录新群聊为Pending)'),
-            el('option', { value: '2', selected: settings.whitelistMode === 2 || settings.whitelistMode === 'Enforced' }, 'Enforced (强制模式，仅批准群可创建)')
+            el('option', { value: '1', selected: settings.whitelistMode === 1 || settings.whitelistMode === 'Disabled' }, 'Disabled (禁用模式，允许所有新群)'),
+            el('option', { value: '2', selected: settings.whitelistMode === 2 || settings.whitelistMode === 'Audit' }, 'Audit (审计模式，记录新群聊为Pending但可运行)'),
+            el('option', { value: '3', selected: settings.whitelistMode === 3 || settings.whitelistMode === 'Enforced' }, 'Enforced (强制模式，仅批准群可创建)')
         );
 
         const selectUnauthorizedChatBehavior = el('select', { disabled: !hasPermission('Admin.ManageSettings') },
@@ -26,9 +27,10 @@ export async function render(container) {
         );
 
         const inputDefaultCreatePolicy = el('select', { disabled: !hasPermission('Admin.ManageSettings') },
-            el('option', { value: '0', selected: settings.defaultCreatePolicy === 0 || settings.defaultCreatePolicy === 'Everyone' }, '所有成员均可创建'),
-            el('option', { value: '1', selected: settings.defaultCreatePolicy === 1 || settings.defaultCreatePolicy === 'ChatAdministrators' }, '仅群管理员可创建'),
-            el('option', { value: '2', selected: settings.defaultCreatePolicy === 2 || settings.defaultCreatePolicy === 'BotOwners' }, '仅机器人拥有者可创建')
+            el('option', { value: '1', selected: settings.defaultCreatePolicy === 1 || settings.defaultCreatePolicy === 'Everyone' }, '所有成员均可创建'),
+            el('option', { value: '2', selected: settings.defaultCreatePolicy === 2 || settings.defaultCreatePolicy === 'ChatAdministrators' }, '仅群管理员可创建'),
+            el('option', { value: '3', selected: settings.defaultCreatePolicy === 3 || settings.defaultCreatePolicy === 'BotOwners' }, '仅机器人拥有者可创建'),
+            el('option', { value: '4', selected: settings.defaultCreatePolicy === 4 || settings.defaultCreatePolicy === 'Disabled' }, '完全禁止创建')
         );
 
         const inputDefaultMaxMembers = el('input', { type: 'number', value: settings.defaultMaxMembers, disabled: !hasPermission('Admin.ManageSettings') });

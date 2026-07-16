@@ -108,7 +108,7 @@ export async function render(container) {
                     el('td', {}, chat.chatId.toString()),
                     el('td', {}, chat.title),
                     el('td', {}, chat.authorizationStatus.toString()),
-                    el('td', {}, chat.createPolicy.toString()),
+                    el('td', {}, getCreatePolicyText(chat.createPolicy)),
                     tdActions
                 )
             );
@@ -122,6 +122,16 @@ export async function render(container) {
         container.appendChild(el('p', { className: 'error' }, '加载群聊失败: ' + e.message));
     }
 }
+function getCreatePolicyText(policy) {
+    const p = parseInt(policy);
+    switch (p) {
+        case 1: return '所有成员';
+        case 2: return '仅管理员';
+        case 3: return '仅机器人拥有者';
+        case 4: return '完全禁止';
+        default: return policy?.toString() || '未知';
+    }
+}
 
 function openEditChatModal(container, chat) {
     const inputJoinEnabled = el('select', {},
@@ -132,10 +142,10 @@ function openEditChatModal(container, chat) {
     const inputMaxActiveChains = el('input', { type: 'number', value: chat.maxActiveChains });
     
     const inputCreatePolicy = el('select', {},
-        el('option', { value: 'Everyone', selected: chat.createPolicy === 'Everyone' }, '所有成员均可创建'),
-        el('option', { value: 'ChatAdministrators', selected: chat.createPolicy === 'ChatAdministrators' }, '仅群管理员可创建'),
-        el('option', { value: 'BotOwners', selected: chat.createPolicy === 'BotOwners' }, '仅机器人拥有者可创建'),
-        el('option', { value: 'Disabled', selected: chat.createPolicy === 'Disabled' }, '完全禁止创建')
+        el('option', { value: '1', selected: chat.createPolicy === 1 || chat.createPolicy === 'Everyone' }, '所有成员均可创建'),
+        el('option', { value: '2', selected: chat.createPolicy === 2 || chat.createPolicy === 'ChatAdministrators' }, '仅群管理员可创建'),
+        el('option', { value: '3', selected: chat.createPolicy === 3 || chat.createPolicy === 'BotOwners' }, '仅机器人拥有者可创建'),
+        el('option', { value: '4', selected: chat.createPolicy === 4 || chat.createPolicy === 'Disabled' }, '完全禁止创建')
     );
 
     const modal = el('div', { className: 'modal' },
@@ -163,7 +173,7 @@ function openEditChatModal(container, chat) {
                         const isJoinEnabled = inputJoinEnabled.value === 'true';
                         const defaultMaxMembers = parseInt(inputMaxMembers.value);
                         const maxActiveChains = parseInt(inputMaxActiveChains.value);
-                        const createPolicy = inputCreatePolicy.value;
+                        const createPolicy = parseInt(inputCreatePolicy.value);
 
                         if (isNaN(defaultMaxMembers) || isNaN(maxActiveChains)) {
                             alert('请输入有效的数字');
